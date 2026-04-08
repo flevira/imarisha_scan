@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,7 +30,7 @@ def get_ingest_root_dir() -> Path:
     configured = os.getenv("IMARISHA_INGEST_ROOT", "").strip()
     if configured:
         return Path(configured).expanduser().resolve()
-    return (Path.cwd() / "runtime_data").resolve()
+    return (Path.home() / ".imarisha_scan" / "runtime_data").resolve()
 
 
 def get_runtime_config() -> RuntimeConfig:
@@ -73,7 +74,14 @@ def run() -> None:
         session = _sample_review_session()
         ingest_root = get_ingest_root_dir()
         scans_dir = ingest_root / "scans"
-        scans_dir.mkdir(parents=True, exist_ok=True)
+        storage_notice = ""
+        try:
+            scans_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            fallback_root = Path(tempfile.gettempdir()) / "imarisha_scan" / "runtime_data"
+            scans_dir = fallback_root / "scans"
+            scans_dir.mkdir(parents=True, exist_ok=True)
+            storage_notice = f"Primary path not writable; using temporary storage at {scans_dir}."
 
         summary = ft.Text(size=14)
         upload_status = ft.Text(size=13)
@@ -88,6 +96,8 @@ def run() -> None:
                 f"Upload folder: {scans_dir}",
                 f"Files queued: {file_count}",
             ]
+            if storage_notice:
+                parts.append(storage_notice)
             if message:
                 parts.append(message)
             upload_status.value = " | ".join(parts)

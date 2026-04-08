@@ -46,11 +46,11 @@ def test_runtime_config_web_flag(monkeypatch) -> None:
 
 def test_ingest_root_dir_defaults_to_runtime_data(monkeypatch, tmp_path) -> None:
     monkeypatch.delenv("IMARISHA_INGEST_ROOT", raising=False)
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
 
     root = get_ingest_root_dir()
 
-    assert root == (tmp_path / "runtime_data").resolve()
+    assert root == (tmp_path / ".imarisha_scan" / "runtime_data").resolve()
 
 
 def test_ingest_root_dir_respects_env(monkeypatch, tmp_path) -> None:
