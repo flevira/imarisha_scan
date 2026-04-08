@@ -71,6 +71,19 @@ def run() -> None:
         page.window_height = 760
         page.padding = 16
 
+        def build_tab(title: str, content: "ft.Control") -> "ft.Tab":
+            tab_variants = (
+                {"text": title, "content": content},
+                {"tab_content": ft.Text(title), "content": content},
+                {"label": title, "content": content},
+            )
+            for kwargs in tab_variants:
+                try:
+                    return ft.Tab(**kwargs)
+                except TypeError:
+                    continue
+            return ft.Tab(content=ft.Column([ft.Text(title), content], spacing=8))
+
         session = _sample_review_session()
         ingest_root = get_ingest_root_dir()
         scans_dir = ingest_root / "scans"
@@ -227,8 +240,8 @@ def run() -> None:
             ft.Tabs(
                 expand=1,
                 tabs=[
-                    ft.Tab(text="Upload", content=upload_view),
-                    ft.Tab(text="Review", content=review_view),
+                    build_tab("Upload", upload_view),
+                    build_tab("Review", review_view),
                 ],
             ),
         )
