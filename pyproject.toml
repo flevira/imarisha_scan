@@ -18,6 +18,9 @@ ui = [
 dev = [
   "pytest>=8.0,<9.0",
 ]
+packaging = [
+  "pyinstaller>=6.0,<7.0",
+]
 
 [project.scripts]
 imarisha-scan = "imarisha_scan.main:run"
