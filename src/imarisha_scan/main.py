@@ -128,8 +128,10 @@ def run() -> None:
         upload_status = ft.Text(size=13)
         grid_container = ft.Column(spacing=8, expand=True, scroll=ft.ScrollMode.AUTO)
 
-        picker = ft.FilePicker()
-        page.overlay.append(picker)
+        picker = None
+        if hasattr(ft, "FilePicker"):
+            picker = ft.FilePicker()
+            page.overlay.append(picker)
 
         def refresh_upload_status(message: str | None = None) -> None:
             file_count = sum(1 for p in scans_dir.iterdir() if p.is_file())
@@ -229,12 +231,23 @@ def run() -> None:
             refresh_upload_status(f"Uploaded {copied} file(s).")
             page.update()
 
-        picker.on_result = on_files_picked
+        if picker is not None:
+            picker.on_result = on_files_picked
 
-        upload_view = ft.Column(
-            [
-                ft.Text("Upload files", size=20, weight=ft.FontWeight.BOLD),
-                ft.Text("Select scanned PDFs/images to queue for processing.", size=13),
+        upload_controls: list[ft.Control] = [
+            ft.Text("Upload files", size=20, weight=ft.FontWeight.BOLD),
+            ft.Text("Select scanned PDFs/images to queue for processing.", size=13),
+        ]
+
+        if picker is None:
+            upload_controls.append(
+                ft.Text(
+                    "File chooser is unavailable in this runtime. Copy files directly into the upload folder path below.",
+                    size=13,
+                )
+            )
+        else:
+            upload_controls.append(
                 ft.Row(
                     [
                         ft.Button(
@@ -246,9 +259,13 @@ def run() -> None:
                         ),
                         ft.Button("Refresh", on_click=lambda _: (refresh_upload_status(), page.update())),
                     ]
-                ),
-                upload_status,
-            ],
+                )
+            )
+
+        upload_controls.append(upload_status)
+
+        upload_view = ft.Column(
+            upload_controls,
             spacing=12,
         )
 
