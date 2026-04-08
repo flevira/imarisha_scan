@@ -1,3 +1,15 @@
-from .adapters import FolderImportAdapter, LinuxSaneAdapter, ScannerAdapter, WindowsWiaAdapter
+from .adapters import (
+    FolderImportAdapter,
+    LinuxSaneAdapter,
+    ScannerAdapter,
+    WindowsTwainAdapter,
+    WindowsWiaAdapter,
+)
 
-__all__ = ["ScannerAdapter", "WindowsWiaAdapter", "LinuxSaneAdapter", "FolderImportAdapter"]
+__all__ = [
+    "ScannerAdapter",
+    "WindowsTwainAdapter",
+    "WindowsWiaAdapter",
+    "LinuxSaneAdapter",
+    "FolderImportAdapter",
+]
