@@ -8,12 +8,13 @@ version = "0.1.0"
 description = "Scanner/image/pdf to CSV desktop workflow scaffold"
 readme = "ROADMAP.md"
 requires-python = ">=3.10"
-dependencies = [
+dependencies = []
+
+[project.optional-dependencies]
+ui = [
   "flet>=0.27,<1.0",
   "pydantic>=2.7,<3.0",
 ]
-
-[project.optional-dependencies]
 dev = [
   "pytest>=8.0,<9.0",
 ]
