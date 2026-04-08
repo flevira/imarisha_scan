@@ -4,7 +4,7 @@ The app currently has **no login requirement** and can be packaged for both Wind
 
 ## Platform support
 - **Windows:** supported via `pyinstaller` on a Windows host.
-- **macOS (MacBook):** supported via `pyinstaller` on a macOS host.
+- **macOS (MacBook):** supported via `flet build macos` on a macOS host.
 
 > Note: cross-compiling native desktop binaries is not recommended. Build each platform on that platform.
 
@@ -23,12 +23,10 @@ pip install .[packaging,ui]
 
 ### macOS
 ```bash
-pip install .[packaging,ui]
+pip install .[ui]
 ./scripts/package_offline_macos.sh
 ./scripts/package_offline_macos_pkg.sh
 ```
-
-> Recommended: use the latest 6.x PyInstaller (the project pins `pyinstaller>=6.16.0`) to avoid known macOS framework signing failures on newer Python/macOS combinations.
 
 ## Output
 - Windows binary: `dist/windows/imarisha-scan.exe`
@@ -44,9 +42,9 @@ If you see `Couldn't open "imarisha-scan.pkg"` (Installer page controller error)
 
 ## Common macOS build error (`codesign ... bundle format unrecognized`)
 If `pyinstaller` fails during `codesign` (for example under `flet_desktop/.../device_info_plus.framework`):
-1. Upgrade packaging deps: `python -m pip install -U "pyinstaller>=6.16,<7"`.
-2. Rebuild via `./scripts/package_offline_macos.sh` (script now runs with `--clean` and a local `PYINSTALLER_CONFIG_DIR` to avoid stale global cache artifacts).
-3. If needed, delete old global cache once: `rm -rf "$HOME/Library/Application Support/pyinstaller"`.
+1. Use the repo build script (`./scripts/package_offline_macos.sh`), which builds through `flet build macos` instead of direct `pyinstaller`.
+2. If `flet` command is missing, install UI extras first: `python -m pip install .[ui]`.
+3. If you still run `pyinstaller` manually, expect framework-signing failures on some Python/macOS versions.
 
 
 ## Common Flet SSL runtime error
