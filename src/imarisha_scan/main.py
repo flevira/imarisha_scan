@@ -84,6 +84,26 @@ def run() -> None:
                     continue
             return ft.Tab(text=title)
 
+        def build_tabs_control(on_change: "ft.ControlEventHandler"):
+            tabs = [build_tab("Upload"), build_tab("Review")]
+            tab_variants = (
+                {"selected_index": 0, "on_change": on_change, "tabs": tabs},
+                {"selected_index": 0, "on_change": on_change, "controls": tabs},
+            )
+            for kwargs in tab_variants:
+                try:
+                    return ft.Tabs(**kwargs)
+                except TypeError:
+                    continue
+            tabs_control = ft.Tabs(selected_index=0, on_change=on_change)
+            if hasattr(tabs_control, "tabs"):
+                tabs_control.tabs = tabs
+                return tabs_control
+            if hasattr(tabs_control, "controls"):
+                tabs_control.controls = tabs
+                return tabs_control
+            return tabs_control
+
         session = _sample_review_session()
         ingest_root = get_ingest_root_dir()
         scans_dir = ingest_root / "scans"
@@ -244,14 +264,7 @@ def run() -> None:
 
         page.add(
             ft.Text(build_home_title(), size=28, weight=ft.FontWeight.BOLD),
-            ft.Tabs(
-                selected_index=0,
-                on_change=on_tab_change,
-                tabs=[
-                    build_tab("Upload"),
-                    build_tab("Review"),
-                ],
-            ),
+            build_tabs_control(on_tab_change),
             tab_content,
         )
 
