@@ -125,10 +125,10 @@ def run() -> None:
         )
 
     if config.web_mode:
-        ft.app(target=main, view=ft.AppView.WEB_BROWSER, host=config.host, port=config.port)
+        ft.run(main, view=ft.AppView.WEB_BROWSER, host=config.host, port=config.port)
         return
 
-    ft.app(target=main)
+    ft.run(main)
 
 
 if __name__ == "__main__":

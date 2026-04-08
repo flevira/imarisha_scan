@@ -12,7 +12,8 @@ dependencies = []
 
 [project.optional-dependencies]
 ui = [
-  "flet>=0.27,<1.0",
+  "flet>=0.84.0,<1.0",
+  "flet-desktop==0.84.0",
   "pydantic>=2.7,<3.0",
 ]
 dev = [
