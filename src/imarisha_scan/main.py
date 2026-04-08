@@ -71,18 +71,18 @@ def run() -> None:
         page.window_height = 760
         page.padding = 16
 
-        def build_tab(title: str, content: "ft.Control") -> "ft.Tab":
+        def build_tab(title: str) -> "ft.Tab":
             tab_variants = (
-                {"text": title, "content": content},
-                {"tab_content": ft.Text(title), "content": content},
-                {"label": title, "content": content},
+                {"text": title},
+                {"label": title},
+                {"tab_content": ft.Text(title)},
             )
             for kwargs in tab_variants:
                 try:
                     return ft.Tab(**kwargs)
                 except TypeError:
                     continue
-            return ft.Tab(content=ft.Column([ft.Text(title), content], spacing=8))
+            return ft.Tab(text=title)
 
         session = _sample_review_session()
         ingest_root = get_ingest_root_dir()
@@ -235,15 +235,24 @@ def run() -> None:
             expand=True,
         )
 
+        tab_content = ft.Container(content=upload_view, expand=True)
+
+        def on_tab_change(e: ft.ControlEvent) -> None:
+            selected = e.control.selected_index or 0
+            tab_content.content = upload_view if selected == 0 else review_view
+            page.update()
+
         page.add(
             ft.Text(build_home_title(), size=28, weight=ft.FontWeight.BOLD),
             ft.Tabs(
-                expand=1,
+                selected_index=0,
+                on_change=on_tab_change,
                 tabs=[
-                    build_tab("Upload", upload_view),
-                    build_tab("Review", review_view),
+                    build_tab("Upload"),
+                    build_tab("Review"),
                 ],
             ),
+            tab_content,
         )
 
     if config.web_mode:
