@@ -227,8 +227,8 @@ def run() -> None:
             ft.Tabs(
                 expand=1,
                 tabs=[
-                    ft.Tab(text="Upload", content=upload_view),
-                    ft.Tab(text="Review", content=review_view),
+                    ft.Tab(tab_content=ft.Text("Upload"), content=upload_view),
+                    ft.Tab(tab_content=ft.Text("Review"), content=review_view),
                 ],
             ),
         )
