@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import shutil
 from dataclasses import dataclass
+from pathlib import Path
 
 import importlib
 import importlib.util
@@ -20,6 +22,14 @@ class RuntimeConfig:
 def build_home_title() -> str:
     """Return the title used on the home screen."""
     return "Imarisha Scan"
+
+
+def get_ingest_root_dir() -> Path:
+    """Return the local folder used for uploaded scan files."""
+    configured = os.getenv("IMARISHA_INGEST_ROOT", "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return (Path.cwd() / "runtime_data").resolve()
 
 
 def get_runtime_config() -> RuntimeConfig:
@@ -61,9 +71,26 @@ def run() -> None:
         page.padding = 16
 
         session = _sample_review_session()
+        ingest_root = get_ingest_root_dir()
+        scans_dir = ingest_root / "scans"
+        scans_dir.mkdir(parents=True, exist_ok=True)
 
         summary = ft.Text(size=14)
+        upload_status = ft.Text(size=13)
         grid_container = ft.Column(spacing=8, expand=True, scroll=ft.ScrollMode.AUTO)
+
+        picker = ft.FilePicker()
+        page.overlay.append(picker)
+
+        def refresh_upload_status(message: str | None = None) -> None:
+            file_count = sum(1 for p in scans_dir.iterdir() if p.is_file())
+            parts = [
+                f"Upload folder: {scans_dir}",
+                f"Files queued: {file_count}",
+            ]
+            if message:
+                parts.append(message)
+            upload_status.value = " | ".join(parts)
 
         def render() -> None:
             summary.value = (
@@ -126,13 +153,74 @@ def run() -> None:
                 )
 
         render()
+        refresh_upload_status()
+
+        def on_files_picked(e: ft.FilePickerResultEvent) -> None:
+            files = e.files or []
+            if not files:
+                refresh_upload_status("No files selected.")
+                page.update()
+                return
+            copied = 0
+            for item in files:
+                if not item.path:
+                    continue
+                src = Path(item.path)
+                if not src.exists() or not src.is_file():
+                    continue
+                target = scans_dir / src.name
+                suffix_idx = 1
+                while target.exists():
+                    target = scans_dir / f"{src.stem}_{suffix_idx}{src.suffix}"
+                    suffix_idx += 1
+                shutil.copy2(src, target)
+                copied += 1
+            refresh_upload_status(f"Uploaded {copied} file(s).")
+            page.update()
+
+        picker.on_result = on_files_picked
+
+        upload_view = ft.Column(
+            [
+                ft.Text("Upload files", size=20, weight=ft.FontWeight.BOLD),
+                ft.Text("Select scanned PDFs/images to queue for processing.", size=13),
+                ft.Row(
+                    [
+                        ft.Button(
+                            "Choose Files",
+                            on_click=lambda _: picker.pick_files(
+                                allow_multiple=True,
+                                dialog_title="Select scan files",
+                            ),
+                        ),
+                        ft.Button("Refresh", on_click=lambda _: (refresh_upload_status(), page.update())),
+                    ]
+                ),
+                upload_status,
+            ],
+            spacing=12,
+        )
+
+        review_view = ft.Column(
+            [
+                ft.Text("Review UI: editable grid with approve/reject workflow", size=14),
+                summary,
+                ft.Divider(),
+                grid_container,
+            ],
+            spacing=12,
+            expand=True,
+        )
 
         page.add(
             ft.Text(build_home_title(), size=28, weight=ft.FontWeight.BOLD),
-            ft.Text("Review UI: editable grid with approve/reject workflow", size=14),
-            summary,
-            ft.Divider(),
-            grid_container,
+            ft.Tabs(
+                expand=1,
+                tabs=[
+                    ft.Tab(text="Upload", content=upload_view),
+                    ft.Tab(text="Review", content=review_view),
+                ],
+            ),
         )
 
     if config.web_mode:

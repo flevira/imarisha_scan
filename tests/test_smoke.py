@@ -1,7 +1,12 @@
 from datetime import datetime
 
 from imarisha_scan.core import DocumentJob
-from imarisha_scan.main import build_home_title, get_runtime_config, should_fallback_to_web
+from imarisha_scan.main import (
+    build_home_title,
+    get_ingest_root_dir,
+    get_runtime_config,
+    should_fallback_to_web,
+)
 
 
 def test_home_title() -> None:
@@ -37,6 +42,24 @@ def test_runtime_config_web_flag(monkeypatch) -> None:
 
     assert cfg.port == 8080
     assert cfg.web_mode is True
+
+
+def test_ingest_root_dir_defaults_to_runtime_data(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("IMARISHA_INGEST_ROOT", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    root = get_ingest_root_dir()
+
+    assert root == (tmp_path / "runtime_data").resolve()
+
+
+def test_ingest_root_dir_respects_env(monkeypatch, tmp_path) -> None:
+    custom = tmp_path / "uploads"
+    monkeypatch.setenv("IMARISHA_INGEST_ROOT", str(custom))
+
+    root = get_ingest_root_dir()
+
+    assert root == custom.resolve()
 
 
 def test_ssl_error_triggers_web_fallback() -> None:
