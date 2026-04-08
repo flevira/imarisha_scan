@@ -28,6 +28,8 @@ pip install .[packaging,ui]
 ./scripts/package_offline_macos_pkg.sh
 ```
 
+> Recommended: use the latest 6.x PyInstaller (the project pins `pyinstaller>=6.16.0`) to avoid known macOS framework signing failures on newer Python/macOS combinations.
+
 ## Output
 - Windows binary: `dist/windows/imarisha-scan.exe`
 - macOS app bundle: `dist/macos/imarisha-scan.app`
@@ -39,6 +41,12 @@ If you see `Couldn't open "imarisha-scan.pkg"` (Installer page controller error)
 2. It is not corrupted/truncated during copy.
 3. You removed quarantine if downloaded from the internet:
    - `xattr -dr com.apple.quarantine dist/macos/imarisha-scan.pkg`
+
+## Common macOS build error (`codesign ... bundle format unrecognized`)
+If `pyinstaller` fails during `codesign` (for example under `flet_desktop/.../device_info_plus.framework`):
+1. Upgrade packaging deps: `python -m pip install -U "pyinstaller>=6.16,<7"`.
+2. Rebuild via `./scripts/package_offline_macos.sh` (script now runs with `--clean` and a local `PYINSTALLER_CONFIG_DIR` to avoid stale global cache artifacts).
+3. If needed, delete old global cache once: `rm -rf "$HOME/Library/Application Support/pyinstaller"`.
 
 
 ## Common Flet SSL runtime error

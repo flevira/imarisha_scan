@@ -21,7 +21,7 @@ dev = [
   "pytest>=8.0,<9.0",
 ]
 packaging = [
-  "pyinstaller>=6.0,<7.0",
+  "pyinstaller>=6.16.0,<7.0",
 ]
 
 [project.scripts]
