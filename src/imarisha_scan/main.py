@@ -21,7 +21,7 @@ def build_home_title() -> str:
 def get_runtime_config() -> RuntimeConfig:
     """Resolve runtime mode from environment variables."""
     port = int(os.getenv("PORT", "8550"))
-    web_mode = os.getenv("FLET_WEB", "0") == "1" or "RAILWAY_ENVIRONMENT" in os.environ
+    web_mode = os.getenv("FLET_WEB", "0") == "1"
     return RuntimeConfig(host="0.0.0.0", port=port, web_mode=web_mode)
 
 

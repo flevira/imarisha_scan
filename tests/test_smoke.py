@@ -21,7 +21,6 @@ def test_document_job_defaults() -> None:
 def test_runtime_config_defaults(monkeypatch) -> None:
     monkeypatch.delenv("PORT", raising=False)
     monkeypatch.delenv("FLET_WEB", raising=False)
-    monkeypatch.delenv("RAILWAY_ENVIRONMENT", raising=False)
 
     cfg = get_runtime_config()
 
@@ -30,9 +29,9 @@ def test_runtime_config_defaults(monkeypatch) -> None:
     assert cfg.web_mode is False
 
 
-def test_runtime_config_railway(monkeypatch) -> None:
+def test_runtime_config_web_flag(monkeypatch) -> None:
     monkeypatch.setenv("PORT", "8080")
-    monkeypatch.setenv("RAILWAY_ENVIRONMENT", "production")
+    monkeypatch.setenv("FLET_WEB", "1")
 
     cfg = get_runtime_config()
 
