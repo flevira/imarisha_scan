@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "imarisha-scan"
+version = "0.1.0"
+description = "Scanner/image/pdf to CSV desktop workflow scaffold"
+readme = "ROADMAP.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+ui = [
+  "flet>=0.84.0,<1.0",
+  "flet-desktop==0.84.0",
+  "pydantic>=2.7,<3.0",
+]
+dev = [
+  "pytest>=8.0,<9.0",
+]
+packaging = [
+  "pyinstaller>=6.0,<7.0",
+]
+
+[project.scripts]
+imarisha-scan = "imarisha_scan.main:run"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
