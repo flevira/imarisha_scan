@@ -6,6 +6,7 @@ import os
 import shutil
 import tempfile
 from dataclasses import dataclass
+import inspect
 from pathlib import Path
 
 import importlib
@@ -76,6 +77,7 @@ def run() -> None:
                 {"text": title},
                 {"label": title},
                 {"tab_content": ft.Text(title)},
+                {"content": ft.Text(title)},
             )
             for kwargs in tab_variants:
                 try:
@@ -86,21 +88,27 @@ def run() -> None:
 
         def build_tabs_control(on_change: "ft.ControlEventHandler"):
             tabs = [build_tab("Upload"), build_tab("Review")]
-            tab_variants = (
-                {"selected_index": 0, "on_change": on_change, "tabs": tabs},
-                {"selected_index": 0, "on_change": on_change, "controls": tabs},
-            )
-            for kwargs in tab_variants:
-                try:
-                    return ft.Tabs(**kwargs)
-                except TypeError:
-                    continue
-            tabs_control = ft.Tabs(selected_index=0, on_change=on_change)
+            params = inspect.signature(ft.Tabs).parameters
+            kwargs = {"selected_index": 0, "on_change": on_change}
+            if "tabs" in params:
+                kwargs["tabs"] = tabs
+            elif "controls" in params:
+                kwargs["controls"] = tabs
+            elif "content" in params:
+                kwargs["content"] = tabs
+            if "length" in params:
+                kwargs["length"] = len(tabs)
+            tabs_control = ft.Tabs(**kwargs)
             if hasattr(tabs_control, "tabs"):
                 tabs_control.tabs = tabs
                 return tabs_control
             if hasattr(tabs_control, "controls"):
                 tabs_control.controls = tabs
+                return tabs_control
+            if hasattr(tabs_control, "content"):
+                tabs_control.content = tabs
+                if hasattr(tabs_control, "length"):
+                    tabs_control.length = len(tabs)
                 return tabs_control
             return tabs_control
 
