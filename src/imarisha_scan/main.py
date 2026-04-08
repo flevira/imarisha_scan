@@ -116,8 +116,8 @@ def run() -> None:
                             ft.Text(row.status, width=80),
                             ft.Row(
                                 [
-                                    ft.ElevatedButton("Approve", on_click=mk_approve(idx)),
-                                    ft.OutlinedButton("Reject", on_click=mk_reject(idx)),
+                                    ft.Button("Approve", on_click=mk_approve(idx)),
+                                    ft.Button("Reject", on_click=mk_reject(idx), style=ft.ButtonStyle(side=ft.BorderSide(1))),
                                 ],
                                 width=180,
                             ),
