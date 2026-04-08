@@ -2,7 +2,16 @@ $ErrorActionPreference = "Stop"
 
 $appName = "imarisha-scan"
 $entrypoint = "src/imarisha_scan/main.py"
+$distDir = "dist/windows"
 
-pyinstaller --noconfirm --onefile --name $appName $entrypoint
+New-Item -ItemType Directory -Path $distDir -Force | Out-Null
 
-Write-Host "Built dist/$appName.exe"
+pyinstaller `
+  --noconfirm `
+  --onefile `
+  --windowed `
+  --name $appName `
+  --distpath $distDir `
+  $entrypoint
+
+Write-Host "Built $distDir/$appName.exe"

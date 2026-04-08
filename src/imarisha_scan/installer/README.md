@@ -1,14 +1,37 @@
 # Offline Installer Packaging
 
-This folder provides starter scripts for creating offline installers.
+The app currently has **no login requirement** and can be packaged for both Windows and macOS.
 
-## Linux/macOS
-- `scripts/package_offline.sh`
+## Platform support
+- **Windows:** supported via `pyinstaller` on a Windows host.
+- **macOS (MacBook):** supported via `pyinstaller` on a macOS host.
 
-## Windows
-- `scripts/package_offline.ps1`
+> Note: cross-compiling native desktop binaries is not recommended. Build each platform on that platform.
 
-Both scripts assume:
-- Python dependencies are already installed in a build environment.
-- `pyinstaller` is available.
-- Local OCR binaries (e.g., Tesseract + `tessdata`) are staged and bundled.
+## Build scripts
+- Windows (PowerShell): `scripts/package_offline.ps1`
+- Windows (bash shell): `scripts/package_offline.sh`
+- macOS (bash shell): `scripts/package_offline_macos.sh`
+
+## Example commands
+### Windows
+```powershell
+pip install .[packaging,ui]
+./scripts/package_offline.ps1
+```
+
+### macOS
+```bash
+pip install .[packaging,ui]
+./scripts/package_offline_macos.sh
+```
+
+## Output
+- Windows binary: `dist/windows/imarisha-scan.exe`
+- macOS app bundle: `dist/macos/imarisha-scan.app`
+
+## Optional polishing checklist
+- Code-sign installers/app bundles.
+- Add app icon and metadata.
+- Bundle OCR binaries/language packs for offline use.
+- Run smoke tests on clean machines before release.
