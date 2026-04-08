@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+import importlib
+import importlib.util
 from imarisha_scan.ui import ReviewRecord, ReviewSession
 
 
@@ -27,6 +29,11 @@ def get_runtime_config() -> RuntimeConfig:
     return RuntimeConfig(host="0.0.0.0", port=port, web_mode=web_mode)
 
 
+def should_fallback_to_web(exc: Exception) -> bool:
+    msg = str(exc)
+    return "CERTIFICATE_VERIFY_FAILED" in msg or "flet" in msg.lower()
+
+
 def _sample_review_session() -> ReviewSession:
     return ReviewSession(
         [
@@ -41,6 +48,10 @@ def run() -> None:
     """Start the Flet app in desktop or web mode."""
     import flet as ft
 
+    spec = importlib.util.find_spec("certifi")
+    if spec is not None:
+        certifi = importlib.import_module("certifi")
+        os.environ.setdefault("SSL_CERT_FILE", certifi.where())
     config = get_runtime_config()
 
     def main(page: "ft.Page") -> None:
@@ -128,7 +139,12 @@ def run() -> None:
         ft.run(main, view=ft.AppView.WEB_BROWSER, host=config.host, port=config.port)
         return
 
-    ft.run(main)
+    try:
+        ft.run(main)
+    except Exception as exc:
+        if not should_fallback_to_web(exc):
+            raise
+        ft.run(main, view=ft.AppView.WEB_BROWSER, host=config.host, port=config.port)
 
 
 if __name__ == "__main__":

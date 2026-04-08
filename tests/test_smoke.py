@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from imarisha_scan.core import DocumentJob
-from imarisha_scan.main import build_home_title, get_runtime_config
+from imarisha_scan.main import build_home_title, get_runtime_config, should_fallback_to_web
 
 
 def test_home_title() -> None:
@@ -37,3 +37,13 @@ def test_runtime_config_web_flag(monkeypatch) -> None:
 
     assert cfg.port == 8080
     assert cfg.web_mode is True
+
+
+def test_ssl_error_triggers_web_fallback() -> None:
+    err = RuntimeError("CERTIFICATE_VERIFY_FAILED")
+    assert should_fallback_to_web(err) is True
+
+
+def test_unrelated_error_does_not_trigger_web_fallback() -> None:
+    err = RuntimeError("some other crash")
+    assert should_fallback_to_web(err) is False
