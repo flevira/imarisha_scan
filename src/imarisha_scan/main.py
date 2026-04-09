@@ -46,6 +46,27 @@ def should_fallback_to_web(exc: Exception) -> bool:
     return "CERTIFICATE_VERIFY_FAILED" in msg or "flet" in msg.lower()
 
 
+def initialize_file_picker(ft_module, page) -> object | None:
+    """Create and register the file picker when the current runtime supports it."""
+    if not hasattr(ft_module, "FilePicker"):
+        return None
+
+    try:
+        picker = ft_module.FilePicker()
+    except Exception:
+        return None
+
+    overlay = getattr(page, "overlay", None)
+    if isinstance(overlay, list):
+        try:
+            overlay.append(picker)
+            return picker
+        except Exception:
+            return None
+
+    return None
+
+
 def _sample_review_session() -> ReviewSession:
     return ReviewSession(
         [
@@ -128,10 +149,7 @@ def run() -> None:
         upload_status = ft.Text(size=13)
         grid_container = ft.Column(spacing=8, expand=True, scroll=ft.ScrollMode.AUTO)
 
-        picker = None
-        if hasattr(ft, "FilePicker"):
-            picker = ft.FilePicker()
-            page.overlay.append(picker)
+        picker = initialize_file_picker(ft, page)
 
         def refresh_upload_status(message: str | None = None) -> None:
             file_count = sum(1 for p in scans_dir.iterdir() if p.is_file())
@@ -247,16 +265,20 @@ def run() -> None:
                 )
             )
         else:
+            def choose_files(_: ft.ControlEvent) -> None:
+                try:
+                    picker.pick_files(
+                        allow_multiple=True,
+                        dialog_title="Select scan files",
+                    )
+                except Exception:
+                    refresh_upload_status("File chooser failed to open in this runtime.")
+                    page.update()
+
             upload_controls.append(
                 ft.Row(
                     [
-                        ft.Button(
-                            "Choose Files",
-                            on_click=lambda _: picker.pick_files(
-                                allow_multiple=True,
-                                dialog_title="Select scan files",
-                            ),
-                        ),
+                        ft.Button("Choose Files", on_click=choose_files),
                         ft.Button("Refresh", on_click=lambda _: (refresh_upload_status(), page.update())),
                     ]
                 )

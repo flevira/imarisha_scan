@@ -5,6 +5,7 @@ from imarisha_scan.main import (
     build_home_title,
     get_ingest_root_dir,
     get_runtime_config,
+    initialize_file_picker,
     should_fallback_to_web,
 )
 
@@ -70,3 +71,33 @@ def test_ssl_error_triggers_web_fallback() -> None:
 def test_unrelated_error_does_not_trigger_web_fallback() -> None:
     err = RuntimeError("some other crash")
     assert should_fallback_to_web(err) is False
+
+
+def test_initialize_file_picker_returns_none_without_support() -> None:
+    class DummyModule:
+        pass
+
+    class DummyPage:
+        overlay: list[object] = []
+
+    assert initialize_file_picker(DummyModule(), DummyPage()) is None
+
+
+def test_initialize_file_picker_adds_picker_to_overlay() -> None:
+    class DummyPicker:
+        pass
+
+    class DummyModule:
+        @staticmethod
+        def FilePicker() -> object:
+            return DummyPicker()
+
+    class DummyPage:
+        def __init__(self) -> None:
+            self.overlay: list[object] = []
+
+    page = DummyPage()
+    picker = initialize_file_picker(DummyModule(), page)
+
+    assert picker is not None
+    assert page.overlay == [picker]
