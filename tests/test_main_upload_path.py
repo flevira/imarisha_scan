@@ -152,6 +152,28 @@ def test_run_ocr_and_extract_for_processing_file_creates_extracted_sidecar(tmp_p
     assert [row["answer"] for row in payload] == ["A", "D"]
 
 
+def test_run_ocr_creates_exam_and_answers_stage_datasets(tmp_path) -> None:
+    ingest_root = tmp_path / "runtime_data"
+    processing = ingest_root / "processing"
+    processing.mkdir(parents=True)
+    scan_file = processing / "sheet_stages.jpg"
+    scan_file.write_text("binary", encoding="utf-8")
+    scan_file.with_suffix(".ocr.txt").write_text(
+        "Student ID: 82\n81535 A B C D E\n",
+        encoding="utf-8",
+    )
+    scan_file.with_suffix(".qr.txt").write_text("type=EXAM;studentId=82;examId=1756", encoding="utf-8")
+    scan_file.with_suffix(".answers.json").write_text('{"81535":"B"}', encoding="utf-8")
+
+    message = run_ocr_and_extract_for_processing_file(ingest_root, scan_file)
+
+    exam_data = json.loads(scan_file.with_suffix(".exam_data.json").read_text(encoding="utf-8"))
+    answers_data = json.loads(scan_file.with_suffix(".answers_data.json").read_text(encoding="utf-8"))
+    assert "Stage 1 exam_data, Stage 2 answers" in message
+    assert exam_data == [{"exam_type": "EXAM", "exam_id": "1756", "test_id": "", "student_id": "82"}]
+    assert answers_data == [{"student_id": "82", "question_id": "81535", "answer": "B"}]
+
+
 def test_load_review_session_supports_legacy_sidecar_extensions(tmp_path) -> None:
     ingest_root = tmp_path / "runtime_data"
     processing = ingest_root / "processing"
