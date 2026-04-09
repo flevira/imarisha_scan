@@ -114,6 +114,14 @@ def initialize_file_picker(ft_module, page) -> object | None:
     except Exception:
         return None
 
+    services = getattr(page, "services", None)
+    if isinstance(services, list):
+        try:
+            services.append(picker)
+            return picker
+        except Exception:
+            return None
+
     overlay = getattr(page, "overlay", None)
     if isinstance(overlay, list):
         try:
