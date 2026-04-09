@@ -11,6 +11,7 @@ class ReviewRecord:
     exam_id: str
     answer: str
     status: str = "pending"  # pending | approved | rejected
+    source_file: str = ""
 
 
 class ReviewSession:
