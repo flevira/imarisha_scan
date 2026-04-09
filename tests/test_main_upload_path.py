@@ -197,3 +197,20 @@ def test_run_ocr_uses_sidecars_for_original_name_after_staging_prefix(tmp_path) 
     assert "OCR and extraction sidecars generated" in message
     payload = json.loads(extracted_path.read_text(encoding="utf-8"))
     assert [row["question_id"] for row in payload] == ["81535", "81570"]
+
+
+def test_run_ocr_unavailable_message_includes_env_var_hint(tmp_path, monkeypatch) -> None:
+    ingest_root = tmp_path / "runtime_data"
+    processing = ingest_root / "processing"
+    processing.mkdir(parents=True)
+    scan_file = processing / "sheet_005.jpg"
+    scan_file.write_text("binary", encoding="utf-8")
+
+    from imarisha_scan import main as main_module
+
+    monkeypatch.setattr(main_module.LocalTesseractEngine, "is_available", lambda self: False)
+
+    message = run_ocr_and_extract_for_processing_file(ingest_root, scan_file)
+
+    assert "IMARISHA_TESSERACT_BIN" in message
+    assert "Alternative" in message

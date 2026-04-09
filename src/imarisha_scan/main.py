@@ -327,7 +327,11 @@ def run_ocr_and_extract_for_processing_file(ingest_root: Path, file_path: Path) 
     if not ocr_text.strip():
         engine = LocalTesseractEngine()
         if not engine.is_available():
-            return "OCR not run (Tesseract unavailable). Add .ocr/.qr/.answers or .ocr.txt/.qr.txt/.answers.json sidecars for extraction."
+            return (
+                "OCR not run (Tesseract unavailable). Install Tesseract and ensure it is on PATH, "
+                "or set IMARISHA_TESSERACT_BIN to its full executable path. "
+                "Alternative: add .ocr/.qr/.answers or .ocr.txt/.qr.txt/.answers.json sidecars for extraction."
+            )
 
         artifacts_dir = ingest_root / "artifacts"
         artifacts_dir.mkdir(parents=True, exist_ok=True)
