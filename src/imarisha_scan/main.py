@@ -172,9 +172,17 @@ def run() -> None:
 
         summary = ft.Text(size=14)
         upload_status = ft.Text(size=13)
+        manual_path_input = ft.TextField(
+            label="File or folder path",
+            hint_text="Paste a full path to a PDF/image file or a folder containing scans",
+            expand=True,
+            dense=True,
+        )
         grid_container = ft.Column(spacing=8, expand=True, scroll=ft.ScrollMode.AUTO)
-
-        picker = initialize_file_picker(ft, page)
+        allowed_suffixes = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
+        enable_file_picker = os.getenv("IMARISHA_ENABLE_FILE_PICKER", "0") == "1"
+        if enable_file_picker:
+            initialize_file_picker(ft, page)
 
         def refresh_upload_status(message: str | None = None) -> None:
             file_count = sum(1 for p in scans_dir.iterdir() if p.is_file())
@@ -187,6 +195,36 @@ def run() -> None:
             if message:
                 parts.append(message)
             upload_status.value = " | ".join(parts)
+
+        def copy_to_queue(src: Path) -> bool:
+            if src.suffix.lower() not in allowed_suffixes:
+                return False
+            target = scans_dir / src.name
+            suffix_idx = 1
+            while target.exists():
+                target = scans_dir / f"{src.stem}_{suffix_idx}{src.suffix}"
+                suffix_idx += 1
+            shutil.copy2(src, target)
+            return True
+
+        def import_path(path_text: str) -> tuple[int, int]:
+            candidate = Path(path_text).expanduser()
+            if not candidate.exists():
+                return (0, 0)
+            if candidate.is_file():
+                copied = 1 if copy_to_queue(candidate) else 0
+                return (copied, 1)
+            if candidate.is_dir():
+                copied = 0
+                checked = 0
+                for item in sorted(candidate.iterdir()):
+                    if not item.is_file():
+                        continue
+                    checked += 1
+                    if copy_to_queue(item):
+                        copied += 1
+                return (copied, checked)
+            return (0, 0)
 
         def render() -> None:
             summary.value = (
@@ -251,63 +289,41 @@ def run() -> None:
         render()
         refresh_upload_status()
 
-        def on_files_picked(e: ft.FilePickerResultEvent) -> None:
-            files = e.files or []
-            if not files:
-                refresh_upload_status("No files selected.")
-                page.update()
-                return
-            copied = 0
-            for item in files:
-                if not item.path:
-                    continue
-                src = Path(item.path)
-                if not src.exists() or not src.is_file():
-                    continue
-                target = scans_dir / src.name
-                suffix_idx = 1
-                while target.exists():
-                    target = scans_dir / f"{src.stem}_{suffix_idx}{src.suffix}"
-                    suffix_idx += 1
-                shutil.copy2(src, target)
-                copied += 1
-            refresh_upload_status(f"Uploaded {copied} file(s).")
-            page.update()
-
-        if picker is not None:
-            picker.on_result = on_files_picked
-
         upload_controls: list[ft.Control] = [
             ft.Text("Upload files", size=20, weight=ft.FontWeight.BOLD),
-            ft.Text("Select scanned PDFs/images to queue for processing.", size=13),
+            ft.Text("Add scanned PDFs/images to queue for processing.", size=13),
+            ft.Text(
+                "Paste a file/folder path below, then click Add Path. "
+                "This replaces the file picker to avoid unsupported runtime controls.",
+                size=13,
+            ),
         ]
 
-        if picker is None:
-            upload_controls.append(
-                ft.Text(
-                    "File chooser is unavailable in this runtime. Copy files directly into the upload folder path below.",
-                    size=13,
-                )
-            )
-        else:
-            def choose_files(_: ft.ControlEvent) -> None:
-                try:
-                    picker.pick_files(
-                        allow_multiple=True,
-                        dialog_title="Select scan files",
-                    )
-                except Exception:
-                    refresh_upload_status("File chooser failed to open in this runtime.")
-                    page.update()
+        def add_path(_: ft.ControlEvent) -> None:
+            source_path = (manual_path_input.value or "").strip()
+            if not source_path:
+                refresh_upload_status("Enter a file or folder path first.")
+                page.update()
+                return
+            copied, checked = import_path(source_path)
+            if checked == 0:
+                refresh_upload_status("Path not found or contains no supported files.")
+            elif copied == 0:
+                refresh_upload_status("No supported scan files found. Use PDF/JPG/PNG/TIFF/BMP.")
+            else:
+                refresh_upload_status(f"Added {copied} file(s) from path.")
+            page.update()
 
-            upload_controls.append(
-                ft.Row(
-                    [
-                        ft.Button("Choose Files", on_click=choose_files),
-                        ft.Button("Refresh", on_click=lambda _: (refresh_upload_status(), page.update())),
-                    ]
-                )
+        upload_controls.append(
+            ft.Row(
+                [
+                    manual_path_input,
+                    ft.Button("Add Path", on_click=add_path),
+                    ft.Button("Refresh", on_click=lambda _: (refresh_upload_status(), page.update())),
+                    ft.Button("Scan", on_click=lambda _: switch_view("review")),
+                ]
             )
+        )
 
         upload_controls.append(upload_status)
 
