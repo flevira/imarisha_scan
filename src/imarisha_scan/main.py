@@ -6,7 +6,6 @@ import os
 import shutil
 import tempfile
 from dataclasses import dataclass, replace
-import inspect
 from pathlib import Path
 import sys
 
@@ -158,46 +157,6 @@ def run() -> None:
         page.window_width = 1200
         page.window_height = 760
         page.padding = 16
-
-        def build_tab(title: str) -> "ft.Tab":
-            tab_variants = (
-                {"text": title},
-                {"label": title},
-                {"tab_content": ft.Text(title)},
-                {"content": ft.Text(title)},
-            )
-            for kwargs in tab_variants:
-                try:
-                    return ft.Tab(**kwargs)
-                except TypeError:
-                    continue
-            return ft.Tab(text=title)
-
-        def build_tabs_control(on_change: "ft.ControlEventHandler"):
-            tabs = [build_tab("Upload"), build_tab("Review")]
-            params = inspect.signature(ft.Tabs).parameters
-            kwargs = {"selected_index": 0, "on_change": on_change}
-            if "tabs" in params:
-                kwargs["tabs"] = tabs
-            elif "controls" in params:
-                kwargs["controls"] = tabs
-            elif "content" in params:
-                kwargs["content"] = tabs
-            if "length" in params:
-                kwargs["length"] = len(tabs)
-            tabs_control = ft.Tabs(**kwargs)
-            if hasattr(tabs_control, "tabs"):
-                tabs_control.tabs = tabs
-                return tabs_control
-            if hasattr(tabs_control, "controls"):
-                tabs_control.controls = tabs
-                return tabs_control
-            if hasattr(tabs_control, "content"):
-                tabs_control.content = tabs
-                if hasattr(tabs_control, "length"):
-                    tabs_control.length = len(tabs)
-                return tabs_control
-            return tabs_control
 
         session = _sample_review_session()
         ingest_root = get_ingest_root_dir()
@@ -368,16 +327,26 @@ def run() -> None:
             expand=True,
         )
 
+        current_view = {"name": "upload"}
+        upload_nav_button = ft.Button("Upload", disabled=True)
+        review_nav_button = ft.Button("Review")
         tab_content = ft.Container(content=upload_view, expand=True)
 
-        def on_tab_change(e: ft.ControlEvent) -> None:
-            selected = e.control.selected_index or 0
-            tab_content.content = upload_view if selected == 0 else review_view
+        def switch_view(view_name: str) -> None:
+            if current_view["name"] == view_name:
+                return
+            current_view["name"] = view_name
+            tab_content.content = upload_view if view_name == "upload" else review_view
+            upload_nav_button.disabled = view_name == "upload"
+            review_nav_button.disabled = view_name == "review"
             page.update()
+
+        upload_nav_button.on_click = lambda _: switch_view("upload")
+        review_nav_button.on_click = lambda _: switch_view("review")
 
         page.add(
             ft.Text(build_home_title(), size=28, weight=ft.FontWeight.BOLD),
-            build_tabs_control(on_tab_change),
+            ft.Row([upload_nav_button, review_nav_button], spacing=8),
             tab_content,
         )
 
