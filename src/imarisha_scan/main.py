@@ -196,16 +196,17 @@ def initialize_file_picker(ft_module, page) -> object | None:
 
 
 def _record_from_processing_file(file_path: Path) -> ReviewRecord:
-    """Create a review record from a processed scan file path."""
-    stem_parts = file_path.stem.split("_")
-    base_name = "_".join(stem_parts[1:]) if len(stem_parts) > 1 else file_path.stem
-    answer_guess = base_name[:1].upper() if base_name else ""
+    """Create a placeholder review record for a queued scan file.
+
+    This UI row is intentionally blank for extractable fields until OCR/OMR
+    outputs are wired into the review loader.
+    """
     return ReviewRecord(
         user_id="",
-        question_id=base_name or file_path.name,
+        question_id="",
         test_id="",
         exam_id="",
-        answer=answer_guess,
+        answer="",
         source_file=file_path.name,
     )
 
