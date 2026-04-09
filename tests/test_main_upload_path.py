@@ -41,9 +41,9 @@ def test_pick_default_scan_file_uses_first_when_selection_missing() -> None:
 def test_completed_rows_for_export_includes_approved_and_rejected_only() -> None:
     session = ReviewSession(
         [
-            ReviewRecord(user_id="1", question_id="Q1", test_id="T1", exam_id="E1", answer="A", status="pending"),
-            ReviewRecord(user_id="2", question_id="Q2", test_id="T1", exam_id="E1", answer="B", status="approved"),
-            ReviewRecord(user_id="3", question_id="Q3", test_id="T1", exam_id="E1", answer="C", status="rejected"),
+            ReviewRecord(exam_type="EXAM", user_id="1", test_id="T1", exam_id="E1", status="pending"),
+            ReviewRecord(exam_type="EXAM", user_id="2", test_id="T1", exam_id="E1", status="approved"),
+            ReviewRecord(exam_type="EXAM", user_id="3", test_id="T1", exam_id="E1", status="rejected"),
         ]
     )
 
@@ -57,17 +57,16 @@ def test_serialize_completed_rows_to_csv_includes_header_and_rows() -> None:
     csv_text = serialize_completed_rows_to_csv(
         [
             {
+                "exam_type": "EXAM",
                 "user_id": "82",
-                "question_id": "81535",
                 "test_id": "",
                 "exam_id": "1756",
-                "answer": "C",
                 "status": "approved",
             }
         ]
     )
-    assert "user_id,question_id,test_id,exam_id,answer,status" in csv_text
-    assert "82,81535,,1756,C,approved" in csv_text
+    assert "exam_type,user_id,test_id,exam_id,status" in csv_text
+    assert "EXAM,82,,1756,approved" in csv_text
 
 
 def test_load_review_session_uses_blank_placeholder_fields_without_sidecars(tmp_path, monkeypatch) -> None:
@@ -81,11 +80,10 @@ def test_load_review_session_uses_blank_placeholder_fields_without_sidecars(tmp_
     assert len(session.rows) == 1
     row = session.rows[0]
     assert row.source_file == "20260408_SMARTREPO_ACADEMY.jpg"
+    assert row.exam_type == ""
     assert row.user_id == ""
-    assert row.question_id == ""
     assert row.test_id == ""
     assert row.exam_id == ""
-    assert row.answer == ""
 
 
 def test_load_review_session_prefers_json_sidecar_rows(tmp_path) -> None:
@@ -95,7 +93,7 @@ def test_load_review_session_prefers_json_sidecar_rows(tmp_path) -> None:
     scan_file = processing / "sheet_001.jpg"
     scan_file.write_text("binary", encoding="utf-8")
     (processing / "sheet_001.json").write_text(
-        '[{"user_id":"82","question_id":"81535","test_id":"","exam_id":"1756","answer":"c"}]',
+        '[{"exam_type":"EXAM","user_id":"82","test_id":"","exam_id":"1756"}]',
         encoding="utf-8",
     )
 
@@ -104,30 +102,24 @@ def test_load_review_session_prefers_json_sidecar_rows(tmp_path) -> None:
     assert len(session.rows) == 1
     row = session.rows[0]
     assert row.source_file == "sheet_001.jpg"
+    assert row.exam_type == "EXAM"
     assert row.user_id == "82"
-    assert row.question_id == "81535"
     assert row.exam_id == "1756"
-    assert row.answer == "C"
 
-
-def test_load_review_session_extracts_from_ocr_qr_and_answers_sidecars(tmp_path) -> None:
+def test_load_review_session_extracts_from_qr_sidecar(tmp_path) -> None:
     ingest_root = tmp_path / "runtime_data"
     processing = ingest_root / "processing"
     processing.mkdir(parents=True)
     scan_file = processing / "sheet_002.jpg"
     scan_file.write_text("binary", encoding="utf-8")
-    (processing / "sheet_002.ocr.txt").write_text(
-        "Student ID: 82\n81535 A B C D E\n81570 A B C D E\n",
-        encoding="utf-8",
-    )
     (processing / "sheet_002.qr.txt").write_text("type=EXAM;studentId=82;examId=1756", encoding="utf-8")
-    (processing / "sheet_002.answers.json").write_text('{"81535":"A","81570":"D"}', encoding="utf-8")
 
     session = load_review_session(ingest_root)
 
-    assert len(session.rows) == 2
-    assert [row.question_id for row in session.rows] == ["81535", "81570"]
-    assert [row.answer for row in session.rows] == ["A", "D"]
+    assert len(session.rows) == 1
+    assert session.rows[0].exam_type == "EXAM"
+    assert session.rows[0].user_id == "82"
+    assert session.rows[0].exam_id == "1756"
 
 
 def test_run_ocr_and_extract_for_processing_file_creates_extracted_sidecar(tmp_path) -> None:
@@ -137,42 +129,28 @@ def test_run_ocr_and_extract_for_processing_file_creates_extracted_sidecar(tmp_p
     scan_file = processing / "sheet_003.jpg"
     scan_file.write_text("binary", encoding="utf-8")
 
-    scan_file.with_suffix(".ocr.txt").write_text(
-        "Student ID: 82\n81535 A B C D E\n81570 A B C D E\n",
-        encoding="utf-8",
-    )
     scan_file.with_suffix(".qr.txt").write_text("type=EXAM;studentId=82;examId=1756", encoding="utf-8")
-    scan_file.with_suffix(".answers.json").write_text('{"81535":"A","81570":"D"}', encoding="utf-8")
 
     message = run_ocr_and_extract_for_processing_file(ingest_root, scan_file)
 
     extracted_path = scan_file.with_suffix(".extracted.json")
     assert "OCR and extraction sidecars generated" in message
     payload = json.loads(extracted_path.read_text(encoding="utf-8"))
-    assert [row["question_id"] for row in payload] == ["81535", "81570"]
-    assert [row["answer"] for row in payload] == ["A", "D"]
+    assert payload == [{"exam_type": "EXAM", "user_id": "82", "test_id": "", "exam_id": "1756"}]
 
-
-def test_run_ocr_creates_exam_and_answers_stage_datasets(tmp_path) -> None:
+def test_run_ocr_creates_exam_dataset_only(tmp_path) -> None:
     ingest_root = tmp_path / "runtime_data"
     processing = ingest_root / "processing"
     processing.mkdir(parents=True)
     scan_file = processing / "sheet_stages.jpg"
     scan_file.write_text("binary", encoding="utf-8")
-    scan_file.with_suffix(".ocr.txt").write_text(
-        "Student ID: 82\n81535 A B C D E\n",
-        encoding="utf-8",
-    )
     scan_file.with_suffix(".qr.txt").write_text("type=EXAM;studentId=82;examId=1756", encoding="utf-8")
-    scan_file.with_suffix(".answers.json").write_text('{"81535":"B"}', encoding="utf-8")
 
     message = run_ocr_and_extract_for_processing_file(ingest_root, scan_file)
 
     exam_data = json.loads(scan_file.with_suffix(".exam_data.json").read_text(encoding="utf-8"))
-    answers_data = json.loads(scan_file.with_suffix(".answers_data.json").read_text(encoding="utf-8"))
-    assert "Stage 1 exam_data, Stage 2 answers" in message
+    assert "Extracted QR metadata only" in message
     assert exam_data == [{"exam_type": "EXAM", "exam_id": "1756", "test_id": "", "student_id": "82"}]
-    assert answers_data == [{"student_id": "82", "question_id": "81535", "answer": "B"}]
 
 
 def test_load_review_session_supports_legacy_sidecar_extensions(tmp_path) -> None:
@@ -181,18 +159,12 @@ def test_load_review_session_supports_legacy_sidecar_extensions(tmp_path) -> Non
     processing.mkdir(parents=True)
     scan_file = processing / "sheet_004.jpg"
     scan_file.write_text("binary", encoding="utf-8")
-    scan_file.with_suffix(".ocr").write_text(
-        "Student ID: 82\n81535 A B C D E\n81570 A B C D E\n",
-        encoding="utf-8",
-    )
     scan_file.with_suffix(".qr").write_text("type=EXAM;studentId=82;examId=1756", encoding="utf-8")
-    scan_file.with_suffix(".answers").write_text('{"81535":"A","81570":"D"}', encoding="utf-8")
 
     session = load_review_session(ingest_root)
 
-    assert len(session.rows) == 2
-    assert [row.question_id for row in session.rows] == ["81535", "81570"]
-    assert [row.answer for row in session.rows] == ["A", "D"]
+    assert len(session.rows) == 1
+    assert session.rows[0].exam_id == "1756"
 
 
 def test_run_ocr_uses_sidecars_for_original_name_after_staging_prefix(tmp_path) -> None:
@@ -207,19 +179,14 @@ def test_run_ocr_uses_sidecars_for_original_name_after_staging_prefix(tmp_path) 
 
     original_scan = scans / "SMARTREPO.pdf"
     original_scan.write_text("binary", encoding="utf-8")
-    original_scan.with_suffix(".ocr").write_text(
-        "Student ID: 82\n81535 A B C D E\n81570 A B C D E\n",
-        encoding="utf-8",
-    )
     original_scan.with_suffix(".qr").write_text("type=EXAM;studentId=82;examId=1756", encoding="utf-8")
-    original_scan.with_suffix(".answers").write_text('{"81535":"A","81570":"D"}', encoding="utf-8")
 
     message = run_ocr_and_extract_for_processing_file(ingest_root, staged_file)
 
     extracted_path = staged_file.with_suffix(".extracted.json")
     assert "OCR and extraction sidecars generated" in message
     payload = json.loads(extracted_path.read_text(encoding="utf-8"))
-    assert [row["question_id"] for row in payload] == ["81535", "81570"]
+    assert payload[0]["user_id"] == "82"
 
 
 def test_run_ocr_unavailable_message_includes_env_var_hint(tmp_path, monkeypatch) -> None:
@@ -239,23 +206,20 @@ def test_run_ocr_unavailable_message_includes_env_var_hint(tmp_path, monkeypatch
     assert "Alternative" in message
 
 
-def test_run_ocr_creates_placeholder_sidecars_when_qr_and_answers_missing(tmp_path) -> None:
+def test_run_ocr_creates_placeholder_qr_sidecar_when_qr_missing(tmp_path) -> None:
     ingest_root = tmp_path / "runtime_data"
     processing = ingest_root / "processing"
     processing.mkdir(parents=True)
     scan_file = processing / "sheet_006.jpg"
     scan_file.write_text("binary", encoding="utf-8")
-    scan_file.with_suffix(".ocr.txt").write_text("Student ID: 82\n81535 A B C D E\n", encoding="utf-8")
+    scan_file.with_suffix(".ocr.txt").write_text("Student ID: 82\n", encoding="utf-8")
 
     message = run_ocr_and_extract_for_processing_file(ingest_root, scan_file)
 
     qr_sidecar = scan_file.with_suffix(".qr.txt")
-    answers_sidecar = scan_file.with_suffix(".answers.json")
     assert "Created placeholder sidecars" in message
     assert qr_sidecar.exists()
-    assert answers_sidecar.exists()
     assert qr_sidecar.read_text(encoding="utf-8").strip() == "type=EXAM;studentId=;examId="
-    assert json.loads(answers_sidecar.read_text(encoding="utf-8")) == {}
 
 
 def test_run_ocr_uses_qr_decoder_payload_when_qr_sidecar_missing(tmp_path, monkeypatch) -> None:
@@ -264,8 +228,7 @@ def test_run_ocr_uses_qr_decoder_payload_when_qr_sidecar_missing(tmp_path, monke
     processing.mkdir(parents=True)
     scan_file = processing / "sheet_qr_decode.jpg"
     scan_file.write_text("binary", encoding="utf-8")
-    scan_file.with_suffix(".ocr.txt").write_text("Student ID: 82\n81535 A B C D E\n", encoding="utf-8")
-    scan_file.with_suffix(".answers.json").write_text('{"81535":"D"}', encoding="utf-8")
+    scan_file.with_suffix(".ocr.txt").write_text("Student ID: 82\n", encoding="utf-8")
 
     from imarisha_scan import main as main_module
     from imarisha_scan.qr import QrDecodeResult
@@ -284,7 +247,6 @@ def test_run_ocr_uses_qr_decoder_payload_when_qr_sidecar_missing(tmp_path, monke
     assert qr_sidecar.read_text(encoding="utf-8").strip() == "type=EXAM;studentId=82;examId=1756"
     payload = json.loads(extracted_path.read_text(encoding="utf-8"))
     assert payload[0]["exam_id"] == "1756"
-    assert payload[0]["answer"] == "D"
 
 
 def test_run_ocr_prefers_preprocessed_image_for_qr_decode(tmp_path, monkeypatch) -> None:
@@ -293,7 +255,6 @@ def test_run_ocr_prefers_preprocessed_image_for_qr_decode(tmp_path, monkeypatch)
     processing.mkdir(parents=True)
     scan_file = processing / "sheet_from_pdf.pdf"
     scan_file.write_text("binary", encoding="utf-8")
-    scan_file.with_suffix(".answers.json").write_text('{"81535":"D"}', encoding="utf-8")
 
     artifacts_preprocess = ingest_root / "artifacts" / "preprocess"
     rendered_path = artifacts_preprocess / "pre_sheet_from_pdf.png"
@@ -340,7 +301,6 @@ def test_run_ocr_prefers_preprocessed_image_for_qr_decode(tmp_path, monkeypatch)
     assert qr_sidecar.read_text(encoding="utf-8").strip() == "type=EXAM;studentId=82;examId=1756"
     payload = json.loads(extracted_path.read_text(encoding="utf-8"))
     assert payload[0]["exam_id"] == "1756"
-    assert payload[0]["answer"] == "D"
 
 
 def test_run_ocr_pdf_combines_all_rendered_pages_into_extracted_rows(tmp_path, monkeypatch) -> None:
@@ -365,11 +325,7 @@ def test_run_ocr_pdf_combines_all_rendered_pages_into_extracted_rows(tmp_path, m
     monkeypatch.setattr(main_module.LocalTesseractEngine, "is_available", lambda self: True)
     monkeypatch.setattr(main_module, "_render_pdf_pages_for_ocr", lambda pdf, output_dir: [page_1, page_2, page_3])
 
-    page_text_by_name = {
-        page_1.name: "81535 - A",
-        page_2.name: "81570 - B",
-        page_3.name: "81679 - C",
-    }
+    page_text_by_name = {page_1.name: "page1", page_2.name: "page2", page_3.name: "page3"}
     monkeypatch.setattr(
         main_module.LocalTesseractEngine,
         "extract_text",
@@ -389,8 +345,7 @@ def test_run_ocr_pdf_combines_all_rendered_pages_into_extracted_rows(tmp_path, m
     extracted_path = scan_file.with_suffix(".extracted.json")
     payload = json.loads(extracted_path.read_text(encoding="utf-8"))
     assert "OCR and extraction sidecars generated" in message
-    assert [row["question_id"] for row in payload] == ["81535", "81570", "81679"]
-    assert [row["answer"] for row in payload] == ["A", "B", "C"]
+    assert payload == [{"exam_type": "EXAM", "user_id": "82", "test_id": "", "exam_id": "1756"}]
 
 
 def test_run_ocr_uses_existing_qr_sidecar_and_common_student_id(tmp_path, monkeypatch) -> None:
@@ -399,9 +354,8 @@ def test_run_ocr_uses_existing_qr_sidecar_and_common_student_id(tmp_path, monkey
     processing.mkdir(parents=True)
     scan_file = processing / "sheet_sidecar_mode.jpg"
     scan_file.write_text("binary", encoding="utf-8")
-    scan_file.with_suffix(".ocr.txt").write_text("Student ID: 999\n81535 A B C D E\n", encoding="utf-8")
+    scan_file.with_suffix(".ocr.txt").write_text("Student ID: 999\n", encoding="utf-8")
     scan_file.with_suffix(".qr.txt").write_text("type=EXAM;studentId=82;examId=SIDECAR", encoding="utf-8")
-    scan_file.with_suffix(".answers.json").write_text('{"81535":"A"}', encoding="utf-8")
 
     from imarisha_scan import main as main_module
 
@@ -426,9 +380,8 @@ def test_run_ocr_keeps_existing_qr_sidecar_without_overwrite(tmp_path, monkeypat
     processing.mkdir(parents=True)
     scan_file = processing / "sheet_qr_mode.jpg"
     scan_file.write_text("binary", encoding="utf-8")
-    scan_file.with_suffix(".ocr.txt").write_text("Student ID: 82\n81535 A B C D E\n", encoding="utf-8")
+    scan_file.with_suffix(".ocr.txt").write_text("Student ID: 82\n", encoding="utf-8")
     scan_file.with_suffix(".qr.txt").write_text("type=EXAM;studentId=82;examId=SIDECAR", encoding="utf-8")
-    scan_file.with_suffix(".answers.json").write_text('{"81535":"B"}', encoding="utf-8")
 
     from imarisha_scan import main as main_module
     monkeypatch.setattr(
@@ -447,14 +400,14 @@ def test_run_ocr_keeps_existing_qr_sidecar_without_overwrite(tmp_path, monkeypat
     assert payload[0]["exam_id"] == "SIDECAR"
 
 
-def test_run_ocr_uses_inferred_qr_and_answers_from_ocr_text(tmp_path) -> None:
+def test_run_ocr_uses_inferred_qr_from_ocr_text(tmp_path) -> None:
     ingest_root = tmp_path / "runtime_data"
     processing = ingest_root / "processing"
     processing.mkdir(parents=True)
     scan_file = processing / "sheet_007.jpg"
     scan_file.write_text("binary", encoding="utf-8")
     scan_file.with_suffix(".ocr.txt").write_text(
-        "type=EXAM;studentId=82;examId=1756\n81535 - C\n81570: A\n",
+        "type=EXAM;studentId=82;examId=1756\nSome text\n",
         encoding="utf-8",
     )
 
@@ -463,5 +416,4 @@ def test_run_ocr_uses_inferred_qr_and_answers_from_ocr_text(tmp_path) -> None:
     extracted_path = scan_file.with_suffix(".extracted.json")
     assert "OCR and extraction sidecars generated" in message
     payload = json.loads(extracted_path.read_text(encoding="utf-8"))
-    assert [row["question_id"] for row in payload] == ["81535", "81570"]
-    assert [row["answer"] for row in payload] == ["C", "A"]
+    assert payload == [{"exam_type": "EXAM", "user_id": "82", "test_id": "", "exam_id": "1756"}]

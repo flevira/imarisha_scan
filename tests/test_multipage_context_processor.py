@@ -36,16 +36,16 @@ def test_context_switches_when_new_qr_appears() -> None:
     records, issues = processor.process_pages("batch.pdf", pages)
 
     assert not issues
-    # 2 questions x 3 pages
-    assert len(records) == 6
+    # one QR metadata row per page
+    assert len(records) == 3
 
     page1 = [r for r in records if r["page_no"] == "1"]
     page2 = [r for r in records if r["page_no"] == "2"]
     page3 = [r for r in records if r["page_no"] == "3"]
 
-    assert all(r["user_id"] == "82" for r in page1)
-    assert all(r["user_id"] == "82" for r in page2)
-    assert all(r["user_id"] == "99" for r in page3)
+    assert all(r["user_id"] == "82" and r["exam_type"] == "EXAM" for r in page1)
+    assert all(r["user_id"] == "82" and r["exam_type"] == "EXAM" for r in page2)
+    assert all(r["user_id"] == "99" and r["exam_type"] == "EXAM" for r in page3)
 
     assert all(r["segment_no"] == "1" for r in page1 + page2)
     assert all(r["segment_no"] == "2" for r in page3)

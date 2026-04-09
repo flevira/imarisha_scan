@@ -5,11 +5,10 @@ from dataclasses import dataclass, replace
 
 @dataclass(frozen=True)
 class ReviewRecord:
+    exam_type: str
     user_id: str
-    question_id: str
     test_id: str
     exam_id: str
-    answer: str
     status: str = "pending"  # pending | approved | rejected
     source_file: str = ""
 
