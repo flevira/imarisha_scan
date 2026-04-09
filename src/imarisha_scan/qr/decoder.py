@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import subprocess
 
 
 @dataclass(frozen=True)
@@ -11,76 +12,86 @@ class QrDecodeResult:
 
 
 class QrPayloadDecoder:
-    """Decode QR payloads from scan images using available local backends."""
+    """Decode QR payloads from scan images using optional runtime backends."""
 
     def decode_payload(self, image_path: str | Path) -> QrDecodeResult | None:
         source = Path(image_path)
         if not source.exists():
             raise FileNotFoundError(f"Input image not found: {source}")
 
-        opencv_payload = self._decode_with_opencv(source)
-        if opencv_payload:
-            return QrDecodeResult(payload=opencv_payload, backend="opencv")
+        zxingcpp_payload = self._decode_with_zxingcpp(source)
+        if zxingcpp_payload:
+            return QrDecodeResult(payload=zxingcpp_payload, backend="zxingcpp")
 
-        pyzbar_payload = self._decode_with_pyzbar(source)
-        if pyzbar_payload:
-            return QrDecodeResult(payload=pyzbar_payload, backend="pyzbar")
+        pyzxing_payload = self._decode_with_pyzxing(source)
+        if pyzxing_payload:
+            return QrDecodeResult(payload=pyzxing_payload, backend="pyzxing")
+
+        zbarimg_payload = self._decode_with_zbarimg(source)
+        if zbarimg_payload:
+            return QrDecodeResult(payload=zbarimg_payload, backend="zbarimg")
 
         return None
 
     @staticmethod
-    def _decode_with_opencv(image_path: Path) -> str | None:
+    def _decode_with_zxingcpp(image_path: Path) -> str | None:
         try:
-            import cv2  # type: ignore[import-not-found]
+            import zxingcpp  # type: ignore[import-not-found]
         except ModuleNotFoundError:
             return None
 
-        image = cv2.imread(str(image_path))
-        if image is None:
+        try:
+            symbols = zxingcpp.read_barcodes(str(image_path))
+        except Exception:
             return None
 
-        detector = cv2.QRCodeDetector()
-        decoded, _, _ = detector.detectAndDecode(image)
-        normalized = QrPayloadDecoder._normalize_payload(decoded)
-        if normalized:
-            return normalized
-
-        if not hasattr(detector, "detectAndDecodeMulti"):
-            return None
-
-        multi_result = detector.detectAndDecodeMulti(image)
-        if not multi_result:
-            return None
-
-        # OpenCV bindings may vary by version; first two values are retval + decoded_info.
-        retval = bool(multi_result[0]) if len(multi_result) > 0 else False
-        decoded_info = multi_result[1] if len(multi_result) > 1 else []
-        if not retval:
-            return None
-
-        for payload in decoded_info:
-            normalized = QrPayloadDecoder._normalize_payload(payload)
+        for symbol in symbols or []:
+            text = getattr(symbol, "text", "")
+            normalized = QrPayloadDecoder._normalize_payload(text)
             if normalized:
                 return normalized
         return None
 
     @staticmethod
-    def _decode_with_pyzbar(image_path: Path) -> str | None:
+    def _decode_with_pyzxing(image_path: Path) -> str | None:
         try:
-            from PIL import Image  # type: ignore[import-not-found]
-            from pyzbar.pyzbar import decode  # type: ignore[import-not-found]
+            from pyzxing import BarCodeReader  # type: ignore[import-not-found]
         except ModuleNotFoundError:
             return None
 
         try:
-            with Image.open(image_path) as img:
-                symbols = decode(img)
-        except OSError:
+            symbols = BarCodeReader().decode(str(image_path)) or []
+        except Exception:
             return None
 
         for symbol in symbols:
-            raw = symbol.data.decode("utf-8", errors="ignore")
-            normalized = QrPayloadDecoder._normalize_payload(raw)
+            if not isinstance(symbol, dict):
+                continue
+            normalized = QrPayloadDecoder._normalize_payload(symbol.get("parsed"))
+            if normalized:
+                return normalized
+            normalized = QrPayloadDecoder._normalize_payload(symbol.get("raw"))
+            if normalized:
+                return normalized
+        return None
+
+    @staticmethod
+    def _decode_with_zbarimg(image_path: Path) -> str | None:
+        try:
+            result = subprocess.run(
+                ["zbarimg", "--quiet", "--raw", str(image_path)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except FileNotFoundError:
+            return None
+
+        if result.returncode != 0:
+            return None
+
+        for line in result.stdout.splitlines():
+            normalized = QrPayloadDecoder._normalize_payload(line)
             if normalized:
                 return normalized
         return None
@@ -89,5 +100,4 @@ class QrPayloadDecoder:
     def _normalize_payload(payload: object) -> str:
         if payload is None:
             return ""
-        text = str(payload).strip()
-        return text
+        return str(payload).strip()
