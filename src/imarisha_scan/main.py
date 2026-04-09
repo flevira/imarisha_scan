@@ -113,22 +113,21 @@ def initialize_file_picker(ft_module, page) -> object | None:
     except Exception:
         return None
 
-    # FilePicker is most reliable when attached to page.overlay in desktop runtimes.
-    overlay = getattr(page, "overlay", None)
-    if isinstance(overlay, list):
-        try:
-            overlay.append(picker)
-            return picker
-        except Exception:
-            pass
-
     services = getattr(page, "services", None)
     if isinstance(services, list):
         try:
             services.append(picker)
             return picker
         except Exception:
-            pass
+            return None
+
+    overlay = getattr(page, "overlay", None)
+    if isinstance(overlay, list):
+        try:
+            overlay.append(picker)
+            return picker
+        except Exception:
+            return None
 
     return None
 

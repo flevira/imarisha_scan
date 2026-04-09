@@ -103,7 +103,7 @@ def test_initialize_file_picker_adds_picker_to_overlay() -> None:
     assert page.overlay == [picker]
 
 
-def test_initialize_file_picker_prefers_page_overlay() -> None:
+def test_initialize_file_picker_prefers_page_services() -> None:
     class DummyPicker:
         pass
 
@@ -121,5 +121,5 @@ def test_initialize_file_picker_prefers_page_overlay() -> None:
     picker = initialize_file_picker(DummyModule(), page)
 
     assert picker is not None
-    assert page.overlay == [picker]
-    assert page.services == []
+    assert page.services == [picker]
+    assert page.overlay == []
