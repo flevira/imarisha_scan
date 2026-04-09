@@ -111,6 +111,28 @@ def pick_default_scan_file(file_names: list[str], current_selection: str | None)
     return file_names[0]
 
 
+def advance_selected_scan_to_ingestion(
+    ingest_root: Path,
+    selected_scan_name: str,
+) -> tuple[Path | None, str]:
+    """Move a selected queued scan from scans -> incoming to continue ingestion."""
+    selected_name = selected_scan_name.strip()
+    if not selected_name:
+        return None, "Select a queued file first, then click Scan."
+    source = ingest_root / "scans" / selected_name
+    if not source.exists() or not source.is_file():
+        return None, f"Selected file is no longer available: {selected_name}"
+    incoming_dir = ingest_root / "incoming"
+    incoming_dir.mkdir(parents=True, exist_ok=True)
+    target = incoming_dir / source.name
+    suffix_idx = 1
+    while target.exists():
+        target = incoming_dir / f"{source.stem}_{suffix_idx}{source.suffix}"
+        suffix_idx += 1
+    source.replace(target)
+    return target, f"Moved to ingestion queue: {target.name}"
+
+
 def get_runtime_config() -> RuntimeConfig:
     """Resolve runtime mode from environment variables."""
     port = int(os.getenv("PORT", "8550"))
@@ -344,13 +366,9 @@ def run() -> None:
             page.update()
 
         def start_scan(_: ft.ControlEvent) -> None:
-            selected_file = queued_file_selector.value
-            if not selected_file:
-                refresh_upload_status("Select a queued file first, then click Scan.")
-                page.update()
-                return
-            refresh_upload_status(f"Starting workflow for: {selected_file}")
-            switch_view("review")
+            selected_file = queued_file_selector.value or ""
+            _, message = advance_selected_scan_to_ingestion(ingest_root, selected_file)
+            refresh_upload_status(message)
             page.update()
 
         upload_controls.append(
