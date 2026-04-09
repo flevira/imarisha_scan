@@ -233,3 +233,23 @@ def test_run_ocr_creates_placeholder_sidecars_when_qr_and_answers_missing(tmp_pa
     assert answers_sidecar.exists()
     assert qr_sidecar.read_text(encoding="utf-8").strip() == "type=EXAM;studentId=;examId="
     assert json.loads(answers_sidecar.read_text(encoding="utf-8")) == {}
+
+
+def test_run_ocr_uses_inferred_qr_and_answers_from_ocr_text(tmp_path) -> None:
+    ingest_root = tmp_path / "runtime_data"
+    processing = ingest_root / "processing"
+    processing.mkdir(parents=True)
+    scan_file = processing / "sheet_007.jpg"
+    scan_file.write_text("binary", encoding="utf-8")
+    scan_file.with_suffix(".ocr.txt").write_text(
+        "type=EXAM;studentId=82;examId=1756\n81535 - C\n81570: A\n",
+        encoding="utf-8",
+    )
+
+    message = run_ocr_and_extract_for_processing_file(ingest_root, scan_file)
+
+    extracted_path = scan_file.with_suffix(".extracted.json")
+    assert "OCR and extraction sidecars generated" in message
+    payload = json.loads(extracted_path.read_text(encoding="utf-8"))
+    assert [row["question_id"] for row in payload] == ["81535", "81570"]
+    assert [row["answer"] for row in payload] == ["C", "A"]
