@@ -5,9 +5,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from imarisha_scan.ocr.base import OcrEngine, OcrResult
-from imarisha_scan.preprocess import PreprocessPipeline, PreprocessResult
-from imarisha_scan.queueing import QueueStore
+try:
+    from imarisha_scan.ocr.base import OcrEngine, OcrResult
+    from imarisha_scan.preprocess import PreprocessPipeline, PreprocessResult
+    from imarisha_scan.queueing import QueueStore
+except ModuleNotFoundError:
+    from .base import OcrEngine, OcrResult  # type: ignore[no-redef]
+    from preprocess import PreprocessPipeline, PreprocessResult  # type: ignore[no-redef]
+    from queueing import QueueStore  # type: ignore[no-redef]
 
 
 @dataclass(frozen=True)

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from imarisha_scan.extract import AnswerSheetExtractor
+try:
+    from imarisha_scan.extract import AnswerSheetExtractor
+except ModuleNotFoundError:
+    from extract import AnswerSheetExtractor  # type: ignore[no-redef]
 
 
 @dataclass(frozen=True)
