@@ -235,6 +235,90 @@ def test_run_ocr_creates_placeholder_sidecars_when_qr_and_answers_missing(tmp_pa
     assert json.loads(answers_sidecar.read_text(encoding="utf-8")) == {}
 
 
+def test_run_ocr_uses_qr_decoder_payload_when_qr_sidecar_missing(tmp_path, monkeypatch) -> None:
+    ingest_root = tmp_path / "runtime_data"
+    processing = ingest_root / "processing"
+    processing.mkdir(parents=True)
+    scan_file = processing / "sheet_qr_decode.jpg"
+    scan_file.write_text("binary", encoding="utf-8")
+    scan_file.with_suffix(".ocr.txt").write_text("Student ID: 82\n81535 A B C D E\n", encoding="utf-8")
+    scan_file.with_suffix(".answers.json").write_text('{"81535":"D"}', encoding="utf-8")
+
+    from imarisha_scan import main as main_module
+    from imarisha_scan.qr import QrDecodeResult
+
+    monkeypatch.setattr(
+        main_module.QrPayloadDecoder,
+        "decode_payload",
+        lambda self, image_path: QrDecodeResult(payload="type=EXAM;studentId=82;examId=1756", backend="mock"),
+    )
+
+    message = run_ocr_and_extract_for_processing_file(ingest_root, scan_file)
+
+    qr_sidecar = scan_file.with_suffix(".qr.txt")
+    extracted_path = scan_file.with_suffix(".extracted.json")
+    assert "OCR and extraction sidecars generated" in message
+    assert qr_sidecar.read_text(encoding="utf-8").strip() == "type=EXAM;studentId=82;examId=1756"
+    payload = json.loads(extracted_path.read_text(encoding="utf-8"))
+    assert payload[0]["exam_id"] == "1756"
+    assert payload[0]["answer"] == "D"
+
+
+def test_run_ocr_sidecar_mode_prefers_existing_qr_sidecar(tmp_path, monkeypatch) -> None:
+    ingest_root = tmp_path / "runtime_data"
+    processing = ingest_root / "processing"
+    processing.mkdir(parents=True)
+    scan_file = processing / "sheet_sidecar_mode.jpg"
+    scan_file.write_text("binary", encoding="utf-8")
+    scan_file.with_suffix(".ocr.txt").write_text("Student ID: 82\n81535 A B C D E\n", encoding="utf-8")
+    scan_file.with_suffix(".qr.txt").write_text("type=EXAM;studentId=82;examId=SIDECAR", encoding="utf-8")
+    scan_file.with_suffix(".answers.json").write_text('{"81535":"A"}', encoding="utf-8")
+
+    from imarisha_scan import main as main_module
+
+    monkeypatch.setattr(
+        main_module.QrPayloadDecoder,
+        "decode_payload",
+        lambda self, image_path: (_ for _ in ()).throw(AssertionError("decoder should not run in sidecar mode")),
+    )
+
+    message = run_ocr_and_extract_for_processing_file(ingest_root, scan_file, qr_source_mode="sidecar")
+
+    extracted_path = scan_file.with_suffix(".extracted.json")
+    assert "OCR and extraction sidecars generated" in message
+    payload = json.loads(extracted_path.read_text(encoding="utf-8"))
+    assert payload[0]["exam_id"] == "SIDECAR"
+
+
+def test_run_ocr_qr_image_mode_overwrites_existing_qr_sidecar(tmp_path, monkeypatch) -> None:
+    ingest_root = tmp_path / "runtime_data"
+    processing = ingest_root / "processing"
+    processing.mkdir(parents=True)
+    scan_file = processing / "sheet_qr_mode.jpg"
+    scan_file.write_text("binary", encoding="utf-8")
+    scan_file.with_suffix(".ocr.txt").write_text("Student ID: 82\n81535 A B C D E\n", encoding="utf-8")
+    scan_file.with_suffix(".qr.txt").write_text("type=EXAM;studentId=82;examId=SIDECAR", encoding="utf-8")
+    scan_file.with_suffix(".answers.json").write_text('{"81535":"B"}', encoding="utf-8")
+
+    from imarisha_scan import main as main_module
+    from imarisha_scan.qr import QrDecodeResult
+
+    monkeypatch.setattr(
+        main_module.QrPayloadDecoder,
+        "decode_payload",
+        lambda self, image_path: QrDecodeResult(payload="type=EXAM;studentId=82;examId=QRMODE", backend="mock"),
+    )
+
+    message = run_ocr_and_extract_for_processing_file(ingest_root, scan_file, qr_source_mode="qr_image")
+
+    qr_sidecar = scan_file.with_suffix(".qr.txt")
+    extracted_path = scan_file.with_suffix(".extracted.json")
+    assert "OCR and extraction sidecars generated" in message
+    assert qr_sidecar.read_text(encoding="utf-8").strip() == "type=EXAM;studentId=82;examId=QRMODE"
+    payload = json.loads(extracted_path.read_text(encoding="utf-8"))
+    assert payload[0]["exam_id"] == "QRMODE"
+
+
 def test_run_ocr_uses_inferred_qr_and_answers_from_ocr_text(tmp_path) -> None:
     ingest_root = tmp_path / "runtime_data"
     processing = ingest_root / "processing"
