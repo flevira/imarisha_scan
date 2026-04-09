@@ -9,6 +9,7 @@ import csv
 import io
 import json
 import re
+import subprocess
 from dataclasses import dataclass, replace
 from pathlib import Path
 import sys
@@ -134,6 +135,27 @@ def pick_default_scan_file(file_names: list[str], current_selection: str | None)
     if current_selection and current_selection in file_names:
         return current_selection
     return file_names[0]
+
+
+def _render_pdf_pages_for_ocr(pdf_path: Path, output_dir: Path) -> list[Path]:
+    pdftoppm_bin = shutil.which("pdftoppm")
+    if pdftoppm_bin is None:
+        return []
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_prefix = output_dir / f"pre_{pdf_path.stem}_page"
+    try:
+        subprocess.run(
+            [pdftoppm_bin, "-png", str(pdf_path), str(output_prefix)],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return []
+
+    rendered_pages = sorted(output_dir.glob(f"{output_prefix.name}-*.png"))
+    return [path for path in rendered_pages if path.is_file()]
 
 
 def advance_selected_scan_to_ingestion(
@@ -399,6 +421,7 @@ def run_ocr_and_extract_for_processing_file(
     extracted_sidecar = file_path.with_suffix(".extracted.json")
 
     ocr_text = ""
+    rendered_pdf_pages: list[Path] = []
     qr_decode_candidates: list[Path] = [file_path]
     if ocr_sidecar.exists() and ocr_sidecar.is_file():
         try:
@@ -422,17 +445,32 @@ def run_ocr_and_extract_for_processing_file(
             engine=engine,
             store=OcrResultStore(artifacts_dir / "ocr_results.sqlite3"),
         )
-        try:
-            record = workflow.process_file(
-                job_id=file_path.stem,
-                input_path=file_path,
-                output_dir=artifacts_dir / "preprocess",
-            )
-        except Exception as exc:
-            return f"OCR failed for {file_path.name}: {exc}"
-        ocr_text = record.text
-        qr_decode_candidates.insert(0, Path(record.processed_path))
-        ocr_sidecar.write_text(ocr_text, encoding="utf-8")
+        preprocess_dir = artifacts_dir / "preprocess"
+        if file_path.suffix.lower() == ".pdf":
+            rendered_pdf_pages = _render_pdf_pages_for_ocr(file_path, preprocess_dir)
+        if rendered_pdf_pages:
+            page_texts: list[str] = []
+            for rendered_page in rendered_pdf_pages:
+                try:
+                    ocr_result = engine.extract_text(rendered_page)
+                except Exception as exc:
+                    return f"OCR failed for {file_path.name} ({rendered_page.name}): {exc}"
+                page_texts.append(ocr_result.text)
+            ocr_text = "\n\n".join(page_texts)
+            qr_decode_candidates = [*rendered_pdf_pages, *qr_decode_candidates]
+            ocr_sidecar.write_text(ocr_text, encoding="utf-8")
+        else:
+            try:
+                record = workflow.process_file(
+                    job_id=file_path.stem,
+                    input_path=file_path,
+                    output_dir=preprocess_dir,
+                )
+            except Exception as exc:
+                return f"OCR failed for {file_path.name}: {exc}"
+            ocr_text = record.text
+            qr_decode_candidates.insert(0, Path(record.processed_path))
+            ocr_sidecar.write_text(ocr_text, encoding="utf-8")
 
     extractor = AnswerSheetExtractor()
     qr_decoder = QrPayloadDecoder()
