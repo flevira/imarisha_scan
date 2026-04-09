@@ -35,6 +35,11 @@ class IngestConfig:
         return self.root_dir / self.scans_dirname
 
     @property
+    def legacy_input_dir(self) -> Path:
+        """Backward-compatible source folder used by older deployments."""
+        return self.root_dir / "input"
+
+    @property
     def incoming_dir(self) -> Path:
         return self.root_dir / self.incoming_dirname
 
@@ -75,11 +80,18 @@ class FolderLifecycleManager:
             folder.mkdir(parents=True, exist_ok=True)
 
     def pull_scans_to_incoming(self) -> list[Path]:
-        """Move only stable scan files from scans -> incoming."""
+        """Move only stable scan files from scans/input -> incoming."""
         self.ensure_directories()
         moved: list[Path] = []
 
-        scan_files = self.scans_reader.scan_to_files(self.config.scans_dir)
+        source_dirs = [self.config.scans_dir]
+        if self.config.legacy_input_dir != self.config.scans_dir and self.config.legacy_input_dir.exists():
+            source_dirs.append(self.config.legacy_input_dir)
+
+        scan_files: list[Path] = []
+        for source_dir in source_dirs:
+            scan_files.extend(self.scans_reader.scan_to_files(source_dir))
+
         active_keys = {str(p) for p in scan_files}
         self._stability = {k: v for k, v in self._stability.items() if k in active_keys}
 
