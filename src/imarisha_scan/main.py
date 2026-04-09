@@ -258,14 +258,15 @@ def _build_exam_data_from_qr_payload(payload: str, extractor: AnswerSheetExtract
 def _build_answers_dataset(
     ocr_text: str,
     provided_answers: dict[str, str],
+    student_id: str,
     extractor: AnswerSheetExtractor,
 ) -> list[dict[str, str]]:
-    student_id = extractor._extract_user_id(ocr_text)  # noqa: SLF001 - centralized regex parser.
     question_ids = extractor._extract_question_ids(ocr_text)  # noqa: SLF001 - centralized regex parser.
     detected_answers = extractor._extract_answers_by_question(ocr_text)  # noqa: SLF001 - centralized regex parser.
+    merged_question_ids = sorted({*question_ids, *provided_answers.keys(), *detected_answers.keys()}, key=str)
 
     rows: list[dict[str, str]] = []
-    for question_id in question_ids:
+    for question_id in merged_question_ids:
         rows.append(
             {
                 "student_id": student_id,
@@ -376,7 +377,6 @@ def _load_rows_from_text_sidecars(file_path: Path) -> list[ReviewRecord]:
 def run_ocr_and_extract_for_processing_file(
     ingest_root: Path,
     file_path: Path,
-    qr_source_mode: str = "auto",
 ) -> str:
     """Generate OCR/extraction sidecars for one staged processing file when possible."""
     if not file_path.exists() or not file_path.is_file():
@@ -437,32 +437,16 @@ def run_ocr_and_extract_for_processing_file(
     inferred_qr_payload = extractor.infer_qr_payload_from_text(ocr_text)
     inferred_answers = extractor.infer_answers_from_text(ocr_text)
 
-    selected_qr_mode = qr_source_mode.strip().lower() if qr_source_mode else "auto"
-    if selected_qr_mode not in {"auto", "sidecar", "qr_image"}:
-        return f"OCR generated. Unsupported QR source mode: {qr_source_mode}"
-
     missing_sidecars: list[str] = []
-    if selected_qr_mode == "sidecar":
-        if not qr_sidecar.exists():
-            missing_sidecars.append(qr_sidecar.name)
-            qr_sidecar.write_text("type=EXAM;studentId=;examId=", encoding="utf-8")
-    elif selected_qr_mode == "qr_image":
+    if not qr_sidecar.exists():
         decoded_payload = qr_decoder.decode_payload(file_path)
         if decoded_payload and decoded_payload.payload:
             qr_sidecar.write_text(decoded_payload.payload, encoding="utf-8")
+        elif inferred_qr_payload:
+            qr_sidecar.write_text(inferred_qr_payload, encoding="utf-8")
         else:
             missing_sidecars.append(qr_sidecar.name)
             qr_sidecar.write_text("type=EXAM;studentId=;examId=", encoding="utf-8")
-    else:
-        if not qr_sidecar.exists():
-            decoded_payload = qr_decoder.decode_payload(file_path)
-            if decoded_payload and decoded_payload.payload:
-                qr_sidecar.write_text(decoded_payload.payload, encoding="utf-8")
-            elif inferred_qr_payload:
-                qr_sidecar.write_text(inferred_qr_payload, encoding="utf-8")
-            else:
-                missing_sidecars.append(qr_sidecar.name)
-                qr_sidecar.write_text("type=EXAM;studentId=;examId=", encoding="utf-8")
     if not answers_sidecar.exists():
         if inferred_answers:
             answers_sidecar.write_text(json.dumps(inferred_answers, indent=2), encoding="utf-8")
@@ -470,20 +454,12 @@ def run_ocr_and_extract_for_processing_file(
             missing_sidecars.append(answers_sidecar.name)
             answers_sidecar.write_text("{}", encoding="utf-8")
     if missing_sidecars:
-        mode_hint = (
-            "QR source mode is set to sidecar; provide a .qr/.qr.txt file."
-            if selected_qr_mode == "sidecar"
-            else "QR source mode is set to QR image; ensure the sheet QR is visible and decodable."
-            if selected_qr_mode == "qr_image"
-            else "You can switch QR source mode between sidecar and QR image before scanning."
-        )
         return (
             "OCR generated. Created placeholder sidecars for missing metadata "
             f"({', '.join(missing_sidecars)}). Required fields are: QR -> type, studentId/user_id, and examId/testId; "
             "Rows -> question_id and answer (A-E). Fill the QR file with "
             "'type=EXAM;studentId=<student_id>;examId=<exam_id>' and the answers file with "
-            "a JSON object (for example {\"81535\":\"A\"}), then click Scan again to build extracted rows. "
-            f"{mode_hint}"
+            "a JSON object (for example {\"81535\":\"A\"}), then click Scan again to build extracted rows."
         )
 
     try:
@@ -497,7 +473,8 @@ def run_ocr_and_extract_for_processing_file(
     normalized_answers = {str(k): str(v) for k, v in answers_payload.items()}
 
     exam_data = _build_exam_data_from_qr_payload(qr_payload, extractor)
-    answers_data = _build_answers_dataset(ocr_text, normalized_answers, extractor)
+    qr_student_id = exam_data[0].get("student_id", "") if exam_data else ""
+    answers_data = _build_answers_dataset(ocr_text, normalized_answers, qr_student_id, extractor)
     exam_data_sidecar.write_text(json.dumps(exam_data, indent=2), encoding="utf-8")
     answers_data_sidecar.write_text(json.dumps(answers_data, indent=2), encoding="utf-8")
 
@@ -508,7 +485,7 @@ def run_ocr_and_extract_for_processing_file(
     if not extracted_rows:
         return (
             "OCR generated. Stage 1 exam_data and Stage 2 answers datasets were created, "
-            "but no merged rows were produced. Confirm matching student_id in QR and body text."
+            "but no merged rows were produced. Confirm the QR sidecar includes student_id and body text includes question_id/answer pairs."
         )
 
     extracted_sidecar.write_text(json.dumps(extracted_rows, indent=2), encoding="utf-8")
@@ -609,16 +586,6 @@ def run() -> None:
             hint_text="Paste a full path to a PDF/image file or a folder containing scans",
             expand=True,
             dense=True,
-        )
-        qr_source_selector = ft.Dropdown(
-            label="QR extraction source",
-            value="qr_image",
-            options=[
-                ft.dropdown.Option("qr_image", "QR image (recommended)"),
-                ft.dropdown.Option("sidecar", "QR sidecar file (.qr/.qr.txt)"),
-            ],
-            dense=True,
-            width=320,
         )
         grid_container = ft.Column(spacing=8, expand=True, scroll=ft.ScrollMode.AUTO)
         allowed_suffixes = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
@@ -744,11 +711,7 @@ def run() -> None:
                 "This replaces the file picker to avoid unsupported runtime controls.",
                 size=13,
             ),
-            ft.Text(
-                "Before scanning, choose where QR metadata should come from: "
-                "decode from the sheet image or read from an existing sidecar file.",
-                size=13,
-            ),
+            ft.Text("Scanning runs in two explicit stages: Stage 1 extracts QR metadata, then Stage 2 extracts body answers.", size=13),
         ]
 
         def add_path(_: ft.ControlEvent) -> None:
@@ -768,14 +731,12 @@ def run() -> None:
 
         def start_scan(_: ft.ControlEvent) -> None:
             selected_file = queued_file_selector.value or ""
-            selected_qr_mode = qr_source_selector.value or "qr_image"
             staged_path, message = advance_selected_scan_to_ingestion(ingest_root, selected_file)
             ocr_message = ""
             if staged_path is not None and staged_path.parent.name == "processing":
                 ocr_message = run_ocr_and_extract_for_processing_file(
                     ingest_root,
                     staged_path,
-                    qr_source_mode=selected_qr_mode,
                 )
 
             combined_message = message if not ocr_message else f"{message} {ocr_message}"
@@ -841,7 +802,6 @@ def run() -> None:
                 ]
             )
         )
-        upload_controls.append(qr_source_selector)
         upload_controls.append(queued_file_selector)
 
         upload_controls.append(upload_status)
