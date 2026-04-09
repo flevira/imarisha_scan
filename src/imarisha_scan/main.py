@@ -11,8 +11,6 @@ import sys
 
 import importlib
 import importlib.util
-from imarisha_scan.export import CsvExporter
-from imarisha_scan.ingest import FolderLifecycleManager, IngestConfig
 
 
 def _bootstrap_import_path() -> None:
@@ -33,6 +31,9 @@ def _bootstrap_import_path() -> None:
 
 
 _bootstrap_import_path()
+from imarisha_scan.export import CsvExporter
+from imarisha_scan.ingest import FolderLifecycleManager, IngestConfig
+
 try:
     from imarisha_scan.ui import ReviewRecord, ReviewSession
 except ModuleNotFoundError:
