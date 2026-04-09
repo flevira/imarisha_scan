@@ -8,6 +8,7 @@ import tempfile
 import csv
 import io
 import json
+import re
 from dataclasses import dataclass, replace
 from pathlib import Path
 import sys
@@ -256,6 +257,25 @@ def _pick_existing_sidecar(file_path: Path, *suffixes: str) -> Path | None:
     return None
 
 
+def _candidate_processing_names(file_path: Path) -> list[str]:
+    names = [file_path.name]
+    match = re.match(r"^\d{14}_(.+)$", file_path.name)
+    if match:
+        names.append(match.group(1))
+    return names
+
+
+def _find_sidecar_for_processing_file(ingest_root: Path, file_path: Path, *suffixes: str) -> Path | None:
+    candidate_dirs = [file_path.parent, ingest_root / "scans", ingest_root / "incoming"]
+    for directory in candidate_dirs:
+        for name in _candidate_processing_names(file_path):
+            source = directory / name
+            sidecar = _pick_existing_sidecar(source, *suffixes)
+            if sidecar is not None:
+                return sidecar
+    return None
+
+
 def _load_rows_from_text_sidecars(file_path: Path) -> list[ReviewRecord]:
     ocr_sidecar = _pick_existing_sidecar(file_path, ".ocr.txt", ".ocr")
     qr_sidecar = _pick_existing_sidecar(file_path, ".qr.txt", ".qr")
@@ -283,11 +303,18 @@ def run_ocr_and_extract_for_processing_file(ingest_root: Path, file_path: Path) 
     if not file_path.exists() or not file_path.is_file():
         return "Processing file not found for OCR."
 
-    ocr_sidecar = _pick_existing_sidecar(file_path, ".ocr.txt", ".ocr") or file_path.with_suffix(".ocr.txt")
-    qr_sidecar = _pick_existing_sidecar(file_path, ".qr.txt", ".qr") or file_path.with_suffix(".qr.txt")
-    answers_sidecar = (
-        _pick_existing_sidecar(file_path, ".answers.json", ".answers") or file_path.with_suffix(".answers.json")
+    ocr_sidecar = (
+        _find_sidecar_for_processing_file(ingest_root, file_path, ".ocr.txt", ".ocr") or file_path.with_suffix(".ocr.txt")
     )
+    qr_sidecar = (
+        _find_sidecar_for_processing_file(ingest_root, file_path, ".qr.txt", ".qr") or file_path.with_suffix(".qr.txt")
+    )
+    answers_sidecar = _find_sidecar_for_processing_file(
+        ingest_root,
+        file_path,
+        ".answers.json",
+        ".answers",
+    ) or file_path.with_suffix(".answers.json")
     extracted_sidecar = file_path.with_suffix(".extracted.json")
 
     ocr_text = ""
