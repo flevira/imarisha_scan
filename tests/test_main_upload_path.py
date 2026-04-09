@@ -1,8 +1,11 @@
+import json
+
 from imarisha_scan.main import (
     completed_rows_for_export,
     load_review_session,
     normalize_upload_path,
     pick_default_scan_file,
+    run_ocr_and_extract_for_processing_file,
     serialize_completed_rows_to_csv,
 )
 from imarisha_scan.ui import ReviewRecord, ReviewSession
@@ -124,3 +127,26 @@ def test_load_review_session_extracts_from_ocr_qr_and_answers_sidecars(tmp_path)
     assert len(session.rows) == 2
     assert [row.question_id for row in session.rows] == ["81535", "81570"]
     assert [row.answer for row in session.rows] == ["A", "D"]
+
+
+def test_run_ocr_and_extract_for_processing_file_creates_extracted_sidecar(tmp_path) -> None:
+    ingest_root = tmp_path / "runtime_data"
+    processing = ingest_root / "processing"
+    processing.mkdir(parents=True)
+    scan_file = processing / "sheet_003.jpg"
+    scan_file.write_text("binary", encoding="utf-8")
+
+    scan_file.with_suffix(".ocr.txt").write_text(
+        "Student ID: 82\n81535 A B C D E\n81570 A B C D E\n",
+        encoding="utf-8",
+    )
+    scan_file.with_suffix(".qr.txt").write_text("type=EXAM;studentId=82;examId=1756", encoding="utf-8")
+    scan_file.with_suffix(".answers.json").write_text('{"81535":"A","81570":"D"}', encoding="utf-8")
+
+    message = run_ocr_and_extract_for_processing_file(ingest_root, scan_file)
+
+    extracted_path = scan_file.with_suffix(".extracted.json")
+    assert "OCR and extraction sidecars generated" in message
+    payload = json.loads(extracted_path.read_text(encoding="utf-8"))
+    assert [row["question_id"] for row in payload] == ["81535", "81570"]
+    assert [row["answer"] for row in payload] == ["A", "D"]

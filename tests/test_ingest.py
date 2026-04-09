@@ -45,6 +45,22 @@ def test_run_once_stages_batch_on_threshold(tmp_path: Path) -> None:
     assert all(p.parent == cfg.processing_dir for p in staged)
 
 
+def test_folder_lifecycle_supports_legacy_input_folder(tmp_path: Path) -> None:
+    cfg = IngestConfig(root_dir=tmp_path, stable_cycles=1, min_batch_size=1)
+    manager = FolderLifecycleManager(cfg)
+    manager.ensure_directories()
+
+    legacy_input = cfg.legacy_input_dir
+    legacy_input.mkdir(parents=True, exist_ok=True)
+    (legacy_input / "legacy_scan.pdf").write_text("a", encoding="utf-8")
+
+    moved = manager.pull_scans_to_incoming()
+
+    assert [p.name for p in moved] == ["legacy_scan.pdf"]
+    assert not (legacy_input / "legacy_scan.pdf").exists()
+    assert (cfg.incoming_dir / "legacy_scan.pdf").exists()
+
+
 def test_retry_then_error_routing(tmp_path: Path) -> None:
     cfg = IngestConfig(root_dir=tmp_path, max_error_retries=1)
     manager = FolderLifecycleManager(cfg)

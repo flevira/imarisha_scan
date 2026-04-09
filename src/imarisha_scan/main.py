@@ -40,10 +40,14 @@ try:
     from imarisha_scan.extract import AnswerSheetExtractor
     from imarisha_scan.export import CsvExporter
     from imarisha_scan.ingest import FolderLifecycleManager, IngestConfig
+    from imarisha_scan.ocr import LocalTesseractEngine, OcrResultStore, OcrWorkflow
+    from imarisha_scan.preprocess import PreprocessPipeline
 except ModuleNotFoundError:
     from extract import AnswerSheetExtractor  # type: ignore[no-redef]
     from export import CsvExporter  # type: ignore[no-redef]
     from ingest import FolderLifecycleManager, IngestConfig  # type: ignore[no-redef]
+    from ocr import LocalTesseractEngine, OcrResultStore, OcrWorkflow  # type: ignore[no-redef]
+    from preprocess import PreprocessPipeline  # type: ignore[no-redef]
 
 try:
     from imarisha_scan.ui import ReviewRecord, ReviewSession
@@ -264,6 +268,67 @@ def _load_rows_from_text_sidecars(file_path: Path) -> list[ReviewRecord]:
     except ValueError:
         return []
     return [_normalize_row_dict(item, file_path.name) for item in extracted_rows]
+
+
+def run_ocr_and_extract_for_processing_file(ingest_root: Path, file_path: Path) -> str:
+    """Generate OCR/extraction sidecars for one staged processing file when possible."""
+    if not file_path.exists() or not file_path.is_file():
+        return "Processing file not found for OCR."
+
+    ocr_sidecar = file_path.with_suffix(".ocr.txt")
+    qr_sidecar = file_path.with_suffix(".qr.txt")
+    answers_sidecar = file_path.with_suffix(".answers.json")
+    extracted_sidecar = file_path.with_suffix(".extracted.json")
+
+    ocr_text = ""
+    if ocr_sidecar.exists() and ocr_sidecar.is_file():
+        try:
+            ocr_text = ocr_sidecar.read_text(encoding="utf-8")
+        except OSError:
+            ocr_text = ""
+
+    if not ocr_text.strip():
+        engine = LocalTesseractEngine()
+        if not engine.is_available():
+            return "OCR not run (Tesseract unavailable). Add .ocr/.qr/.answers sidecars for extraction."
+
+        artifacts_dir = ingest_root / "artifacts"
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+        workflow = OcrWorkflow(
+            preprocess=PreprocessPipeline(),
+            engine=engine,
+            store=OcrResultStore(artifacts_dir / "ocr_results.sqlite3"),
+        )
+        try:
+            record = workflow.process_file(
+                job_id=file_path.stem,
+                input_path=file_path,
+                output_dir=artifacts_dir / "preprocess",
+            )
+        except Exception as exc:
+            return f"OCR failed for {file_path.name}: {exc}"
+        ocr_text = record.text
+        ocr_sidecar.write_text(ocr_text, encoding="utf-8")
+
+    if not (qr_sidecar.exists() and answers_sidecar.exists()):
+        return "OCR generated. Awaiting QR/answers sidecars to build extracted rows."
+
+    try:
+        qr_payload = qr_sidecar.read_text(encoding="utf-8").strip()
+        answers_payload = json.loads(answers_sidecar.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return f"OCR generated. Could not parse sidecars: {exc}"
+    if not isinstance(answers_payload, dict):
+        return "OCR generated. answers sidecar must be a JSON object."
+
+    normalized_answers = {str(k): str(v) for k, v in answers_payload.items()}
+    try:
+        extracted_rows = AnswerSheetExtractor().extract_rows(ocr_text, qr_payload, normalized_answers)
+    except ValueError as exc:
+        return f"OCR generated. Extraction pending valid QR/answers: {exc}"
+
+    extracted_sidecar.write_text(json.dumps(extracted_rows, indent=2), encoding="utf-8")
+    return f"OCR and extraction sidecars generated for {file_path.name}."
 
 
 def rows_from_processing_file(file_path: Path) -> list[ReviewRecord]:
@@ -501,8 +566,13 @@ def run() -> None:
 
         def start_scan(_: ft.ControlEvent) -> None:
             selected_file = queued_file_selector.value or ""
-            _, message = advance_selected_scan_to_ingestion(ingest_root, selected_file)
-            refresh_upload_status(message)
+            staged_path, message = advance_selected_scan_to_ingestion(ingest_root, selected_file)
+            ocr_message = ""
+            if staged_path is not None and staged_path.parent.name == "processing":
+                ocr_message = run_ocr_and_extract_for_processing_file(ingest_root, staged_path)
+
+            combined_message = message if not ocr_message else f"{message} {ocr_message}"
+            refresh_upload_status(combined_message)
             review_status.value = "Scan initiated. Open Review to validate staged rows."
             page.update()
 
