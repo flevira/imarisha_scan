@@ -2,6 +2,7 @@ from datetime import datetime
 
 from imarisha_scan.core import DocumentJob
 from imarisha_scan.main import (
+    advance_selected_scan_to_ingestion,
     build_home_title,
     get_ingest_root_dir,
     get_runtime_config,
@@ -123,3 +124,31 @@ def test_initialize_file_picker_prefers_page_services() -> None:
     assert picker is not None
     assert page.services == [picker]
     assert page.overlay == []
+
+
+def test_advance_selected_scan_to_ingestion_moves_file(tmp_path) -> None:
+    ingest_root = tmp_path / "runtime_data"
+    scans_dir = ingest_root / "scans"
+    scans_dir.mkdir(parents=True)
+    source = scans_dir / "scan_1.pdf"
+    source.write_text("pdf", encoding="utf-8")
+
+    target, message = advance_selected_scan_to_ingestion(ingest_root, "scan_1.pdf")
+
+    assert target is not None
+    assert target.parent == ingest_root / "processing"
+    assert target is not None and target.exists()
+    assert not source.exists()
+    assert message.startswith("Ingestion started:")
+
+
+def test_advance_selected_scan_to_ingestion_rejects_missing_or_empty(tmp_path) -> None:
+    ingest_root = tmp_path / "runtime_data"
+
+    target, message = advance_selected_scan_to_ingestion(ingest_root, "")
+    assert target is None
+    assert message == "Select a queued file first, then click Scan."
+
+    target, message = advance_selected_scan_to_ingestion(ingest_root, "missing.pdf")
+    assert target is None
+    assert message == "Selected file is no longer available: missing.pdf"
