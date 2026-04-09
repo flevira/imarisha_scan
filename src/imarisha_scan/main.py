@@ -361,7 +361,9 @@ def run_ocr_and_extract_for_processing_file(ingest_root: Path, file_path: Path) 
             answers_sidecar.write_text("{}", encoding="utf-8")
         return (
             "OCR generated. Created placeholder sidecars for missing metadata "
-            f"({', '.join(missing_sidecars)}). Update these files and click Scan again to build extracted rows."
+            f"({', '.join(missing_sidecars)}). Fill in the QR file with "
+            "'type=EXAM;studentId=<student_id>;examId=<exam_id>' and the answers file with "
+            "a JSON object (for example {\"81535\":\"A\"}), then click Scan again to build extracted rows."
         )
 
     try:
