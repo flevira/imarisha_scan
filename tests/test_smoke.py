@@ -101,3 +101,25 @@ def test_initialize_file_picker_adds_picker_to_overlay() -> None:
 
     assert picker is not None
     assert page.overlay == [picker]
+
+
+def test_initialize_file_picker_prefers_page_services() -> None:
+    class DummyPicker:
+        pass
+
+    class DummyModule:
+        @staticmethod
+        def FilePicker() -> object:
+            return DummyPicker()
+
+    class DummyPage:
+        def __init__(self) -> None:
+            self.services: list[object] = []
+            self.overlay: list[object] = []
+
+    page = DummyPage()
+    picker = initialize_file_picker(DummyModule(), page)
+
+    assert picker is not None
+    assert page.services == [picker]
+    assert page.overlay == []
