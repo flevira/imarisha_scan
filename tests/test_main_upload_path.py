@@ -189,21 +189,19 @@ def test_run_ocr_uses_sidecars_for_original_name_after_staging_prefix(tmp_path) 
     assert payload[0]["user_id"] == "82"
 
 
-def test_run_ocr_unavailable_message_includes_env_var_hint(tmp_path, monkeypatch) -> None:
+def test_run_ocr_creates_placeholder_when_qr_missing_without_ocr(tmp_path) -> None:
     ingest_root = tmp_path / "runtime_data"
     processing = ingest_root / "processing"
     processing.mkdir(parents=True)
     scan_file = processing / "sheet_005.jpg"
     scan_file.write_text("binary", encoding="utf-8")
 
-    from imarisha_scan import main as main_module
-
-    monkeypatch.setattr(main_module.LocalTesseractEngine, "is_available", lambda self: False)
-
     message = run_ocr_and_extract_for_processing_file(ingest_root, scan_file)
 
-    assert "IMARISHA_TESSERACT_BIN" in message
-    assert "Alternative" in message
+    qr_sidecar = scan_file.with_suffix(".qr.txt")
+    assert "Created placeholder sidecars" in message
+    assert qr_sidecar.exists()
+    assert qr_sidecar.read_text(encoding="utf-8").strip() == "type=EXAM;studentId=;examId="
 
 
 def test_run_ocr_creates_placeholder_qr_sidecar_when_qr_missing(tmp_path) -> None:
@@ -260,29 +258,14 @@ def test_run_ocr_prefers_preprocessed_image_for_qr_decode(tmp_path, monkeypatch)
     rendered_path = artifacts_preprocess / "pre_sheet_from_pdf.png"
 
     from imarisha_scan import main as main_module
-    from imarisha_scan.ocr import OcrResult
-    from imarisha_scan.preprocess import PreprocessResult, QualityAssessment
     from imarisha_scan.qr import QrDecodeResult
 
-    monkeypatch.setattr(main_module.LocalTesseractEngine, "is_available", lambda self: True)
-
-    def fake_preprocess(self, input_path, output_dir, dpi=None):
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
+    def fake_render(pdf, output_dir):
+        rendered_path.parent.mkdir(parents=True, exist_ok=True)
         rendered_path.write_text("png", encoding="utf-8")
-        return PreprocessResult(
-            input_path=Path(input_path),
-            output_path=rendered_path,
-            actions=("pdf_to_png",),
-            quality=QualityAssessment(dpi=None, status="warn", reason="test"),
-        )
+        return [rendered_path]
 
-    monkeypatch.setattr(main_module.PreprocessPipeline, "preprocess_file", fake_preprocess)
-    monkeypatch.setattr(
-        main_module.LocalTesseractEngine,
-        "extract_text",
-        lambda self, image_path, language="eng": OcrResult(text="Student ID: 82\n81535 A B C D E\n", provider="mock"),
-    )
+    monkeypatch.setattr(main_module, "_render_pdf_pages_for_ocr", fake_render)
 
     decode_calls: list[str] = []
 
@@ -319,21 +302,9 @@ def test_run_ocr_pdf_combines_all_rendered_pages_into_extracted_rows(tmp_path, m
         page.write_text("png", encoding="utf-8")
 
     from imarisha_scan import main as main_module
-    from imarisha_scan.ocr import OcrResult
     from imarisha_scan.qr import QrDecodeResult
 
-    monkeypatch.setattr(main_module.LocalTesseractEngine, "is_available", lambda self: True)
     monkeypatch.setattr(main_module, "_render_pdf_pages_for_ocr", lambda pdf, output_dir: [page_1, page_2, page_3])
-
-    page_text_by_name = {page_1.name: "page1", page_2.name: "page2", page_3.name: "page3"}
-    monkeypatch.setattr(
-        main_module.LocalTesseractEngine,
-        "extract_text",
-        lambda self, image_path, language="eng": OcrResult(
-            text=page_text_by_name[Path(image_path).name],
-            provider="mock",
-        ),
-    )
     monkeypatch.setattr(
         main_module.QrPayloadDecoder,
         "decode_payload",
@@ -400,7 +371,7 @@ def test_run_ocr_keeps_existing_qr_sidecar_without_overwrite(tmp_path, monkeypat
     assert payload[0]["exam_id"] == "SIDECAR"
 
 
-def test_run_ocr_uses_inferred_qr_from_ocr_text(tmp_path) -> None:
+def test_run_ocr_ignores_ocr_sidecar_for_qr_inference(tmp_path) -> None:
     ingest_root = tmp_path / "runtime_data"
     processing = ingest_root / "processing"
     processing.mkdir(parents=True)
@@ -413,7 +384,6 @@ def test_run_ocr_uses_inferred_qr_from_ocr_text(tmp_path) -> None:
 
     message = run_ocr_and_extract_for_processing_file(ingest_root, scan_file)
 
-    extracted_path = scan_file.with_suffix(".extracted.json")
-    assert "OCR and extraction sidecars generated" in message
-    payload = json.loads(extracted_path.read_text(encoding="utf-8"))
-    assert payload == [{"exam_type": "EXAM", "user_id": "82", "test_id": "", "exam_id": "1756"}]
+    qr_sidecar = scan_file.with_suffix(".qr.txt")
+    assert "Created placeholder sidecars" in message
+    assert qr_sidecar.read_text(encoding="utf-8").strip() == "type=EXAM;studentId=;examId="

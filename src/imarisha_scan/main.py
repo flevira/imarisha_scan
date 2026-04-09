@@ -42,15 +42,11 @@ try:
     from imarisha_scan.extract import AnswerSheetExtractor
     from imarisha_scan.export import CsvExporter
     from imarisha_scan.ingest import FolderLifecycleManager, IngestConfig
-    from imarisha_scan.ocr import LocalTesseractEngine, OcrResultStore, OcrWorkflow
-    from imarisha_scan.preprocess import PreprocessPipeline
     from imarisha_scan.qr import QrPayloadDecoder
 except ModuleNotFoundError:
     from extract import AnswerSheetExtractor  # type: ignore[no-redef]
     from export import CsvExporter  # type: ignore[no-redef]
     from ingest import FolderLifecycleManager, IngestConfig  # type: ignore[no-redef]
-    from ocr import LocalTesseractEngine, OcrResultStore, OcrWorkflow  # type: ignore[no-redef]
-    from preprocess import PreprocessPipeline  # type: ignore[no-redef]
     from qr import QrPayloadDecoder  # type: ignore[no-redef]
 
 try:
@@ -339,75 +335,26 @@ def run_ocr_and_extract_for_processing_file(
     ingest_root: Path,
     file_path: Path,
 ) -> str:
-    """Generate OCR/extraction sidecars for one staged processing file when possible."""
+    """Generate extraction sidecars for one staged processing file using QR payloads."""
     if not file_path.exists() or not file_path.is_file():
         return "Processing file not found for OCR."
 
-    ocr_sidecar = (
-        _find_sidecar_for_processing_file(ingest_root, file_path, ".ocr.txt", ".ocr") or file_path.with_suffix(".ocr.txt")
-    )
     qr_sidecar = (
         _find_sidecar_for_processing_file(ingest_root, file_path, ".qr.txt", ".qr") or file_path.with_suffix(".qr.txt")
     )
     exam_data_sidecar = file_path.with_suffix(".exam_data.json")
     extracted_sidecar = file_path.with_suffix(".extracted.json")
 
-    ocr_text = ""
     rendered_pdf_pages: list[Path] = []
     qr_decode_candidates: list[Path] = [file_path]
-    if ocr_sidecar.exists() and ocr_sidecar.is_file():
-        try:
-            ocr_text = ocr_sidecar.read_text(encoding="utf-8")
-        except OSError:
-            ocr_text = ""
-
-    has_qr_sidecar = qr_sidecar.exists() and qr_sidecar.is_file()
-    if not ocr_text.strip() and not has_qr_sidecar:
-        engine = LocalTesseractEngine()
-        if not engine.is_available():
-            return (
-                "OCR not run (Tesseract unavailable). Install Tesseract and ensure it is on PATH, "
-                "or set IMARISHA_TESSERACT_BIN to its full executable path. "
-                "Alternative: add a .qr/.qr.txt sidecar for extraction."
-            )
-
-        artifacts_dir = ingest_root / "artifacts"
-        artifacts_dir.mkdir(parents=True, exist_ok=True)
-        workflow = OcrWorkflow(
-            preprocess=PreprocessPipeline(),
-            engine=engine,
-            store=OcrResultStore(artifacts_dir / "ocr_results.sqlite3"),
-        )
-        preprocess_dir = artifacts_dir / "preprocess"
-        if file_path.suffix.lower() == ".pdf":
-            rendered_pdf_pages = _render_pdf_pages_for_ocr(file_path, preprocess_dir)
-        if rendered_pdf_pages:
-            page_texts: list[str] = []
-            for rendered_page in rendered_pdf_pages:
-                try:
-                    ocr_result = engine.extract_text(rendered_page)
-                except Exception as exc:
-                    return f"OCR failed for {file_path.name} ({rendered_page.name}): {exc}"
-                page_texts.append(ocr_result.text)
-            ocr_text = "\n\n".join(page_texts)
-            qr_decode_candidates = [*rendered_pdf_pages, *qr_decode_candidates]
-            ocr_sidecar.write_text(ocr_text, encoding="utf-8")
-        else:
-            try:
-                record = workflow.process_file(
-                    job_id=file_path.stem,
-                    input_path=file_path,
-                    output_dir=preprocess_dir,
-                )
-            except Exception as exc:
-                return f"OCR failed for {file_path.name}: {exc}"
-            ocr_text = record.text
-            qr_decode_candidates.insert(0, Path(record.processed_path))
-            ocr_sidecar.write_text(ocr_text, encoding="utf-8")
+    if not qr_sidecar.exists() and file_path.suffix.lower() == ".pdf":
+        preprocess_dir = ingest_root / "artifacts" / "preprocess"
+        rendered_pdf_pages = _render_pdf_pages_for_ocr(file_path, preprocess_dir)
+    if rendered_pdf_pages:
+        qr_decode_candidates = [*rendered_pdf_pages, *qr_decode_candidates]
 
     extractor = AnswerSheetExtractor()
     qr_decoder = QrPayloadDecoder()
-    inferred_qr_payload = extractor.infer_qr_payload_from_text(ocr_text)
 
     missing_sidecars: list[str] = []
     if not qr_sidecar.exists():
@@ -423,8 +370,6 @@ def run_ocr_and_extract_for_processing_file(
 
         if decoded_payload and decoded_payload.payload:
             qr_sidecar.write_text(decoded_payload.payload, encoding="utf-8")
-        elif inferred_qr_payload:
-            qr_sidecar.write_text(inferred_qr_payload, encoding="utf-8")
         else:
             missing_sidecars.append(qr_sidecar.name)
             qr_sidecar.write_text("type=EXAM;studentId=;examId=", encoding="utf-8")
