@@ -5,9 +5,13 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+import csv
+import io
+import json
 from dataclasses import dataclass, replace
 from pathlib import Path
 import sys
+from urllib.parse import quote
 
 import importlib
 import importlib.util
@@ -33,9 +37,11 @@ def _bootstrap_import_path() -> None:
 _bootstrap_import_path()
 
 try:
+    from imarisha_scan.extract import AnswerSheetExtractor
     from imarisha_scan.export import CsvExporter
     from imarisha_scan.ingest import FolderLifecycleManager, IngestConfig
 except ModuleNotFoundError:
+    from extract import AnswerSheetExtractor  # type: ignore[no-redef]
     from export import CsvExporter  # type: ignore[no-redef]
     from ingest import FolderLifecycleManager, IngestConfig  # type: ignore[no-redef]
 
@@ -196,11 +202,7 @@ def initialize_file_picker(ft_module, page) -> object | None:
 
 
 def _record_from_processing_file(file_path: Path) -> ReviewRecord:
-    """Create a placeholder review record for a queued scan file.
-
-    This UI row is intentionally blank for extractable fields until OCR/OMR
-    outputs are wired into the review loader.
-    """
+    """Create a fallback review record when extraction artifacts are unavailable."""
     return ReviewRecord(
         user_id="",
         question_id="",
@@ -211,12 +213,80 @@ def _record_from_processing_file(file_path: Path) -> ReviewRecord:
     )
 
 
+def _normalize_row_dict(raw: dict[str, object], source_file: str) -> ReviewRecord:
+    return ReviewRecord(
+        user_id=str(raw.get("user_id", "")).strip(),
+        question_id=str(raw.get("question_id", "")).strip(),
+        test_id=str(raw.get("test_id", "")).strip(),
+        exam_id=str(raw.get("exam_id", "")).strip(),
+        answer=str(raw.get("answer", "")).strip().upper(),
+        status=str(raw.get("status", "pending")).strip() or "pending",
+        source_file=source_file,
+    )
+
+
+def _load_rows_from_json_sidecar(file_path: Path) -> list[ReviewRecord]:
+    sidecars = [file_path.with_suffix(".json"), file_path.with_suffix(".extracted.json")]
+    for sidecar in sidecars:
+        if not sidecar.exists() or not sidecar.is_file():
+            continue
+        try:
+            payload = json.loads(sidecar.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        if isinstance(payload, dict):
+            payload = payload.get("rows", [])
+        if not isinstance(payload, list):
+            continue
+        rows = [item for item in payload if isinstance(item, dict)]
+        if rows:
+            return [_normalize_row_dict(item, file_path.name) for item in rows]
+    return []
+
+
+def _load_rows_from_text_sidecars(file_path: Path) -> list[ReviewRecord]:
+    ocr_sidecar = file_path.with_suffix(".ocr.txt")
+    qr_sidecar = file_path.with_suffix(".qr.txt")
+    answers_sidecar = file_path.with_suffix(".answers.json")
+    if not (ocr_sidecar.exists() and qr_sidecar.exists() and answers_sidecar.exists()):
+        return []
+    try:
+        ocr_text = ocr_sidecar.read_text(encoding="utf-8")
+        qr_payload = qr_sidecar.read_text(encoding="utf-8").strip()
+        answers = json.loads(answers_sidecar.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(answers, dict):
+        return []
+    normalized_answers = {str(k): str(v) for k, v in answers.items()}
+    try:
+        extracted_rows = AnswerSheetExtractor().extract_rows(ocr_text, qr_payload, normalized_answers)
+    except ValueError:
+        return []
+    return [_normalize_row_dict(item, file_path.name) for item in extracted_rows]
+
+
+def rows_from_processing_file(file_path: Path) -> list[ReviewRecord]:
+    """Load extraction rows for one processing file from sidecar artifacts when available."""
+    extracted_rows = _load_rows_from_json_sidecar(file_path)
+    if extracted_rows:
+        return extracted_rows
+    extracted_rows = _load_rows_from_text_sidecars(file_path)
+    if extracted_rows:
+        return extracted_rows
+    return [_record_from_processing_file(file_path)]
+
+
 def load_review_session(ingest_root: Path) -> ReviewSession:
     """Load rows that are currently in the processing queue for manual review."""
     ingest_config = IngestConfig(root_dir=ingest_root)
     lifecycle = FolderLifecycleManager(ingest_config)
     lifecycle.ensure_directories()
-    rows = [_record_from_processing_file(item) for item in sorted(ingest_config.processing_dir.iterdir()) if item.is_file()]
+    rows: list[ReviewRecord] = []
+    allowed_suffixes = {s.lower() for s in ingest_config.allowed_suffixes}
+    for item in sorted(ingest_config.processing_dir.iterdir()):
+        if item.is_file() and item.suffix.lower() in allowed_suffixes:
+            rows.extend(rows_from_processing_file(item))
     return ReviewSession(rows)
 
 
@@ -234,6 +304,15 @@ def completed_rows_for_export(session: ReviewSession) -> list[dict[str, str]]:
         for row in session.rows
         if row.status in {"approved", "rejected"}
     ]
+
+
+def serialize_completed_rows_to_csv(rows: list[dict[str, str]]) -> str:
+    """Serialize completed rows into CSV text for browser download."""
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=["user_id", "question_id", "test_id", "exam_id", "answer", "status"])
+    writer.writeheader()
+    writer.writerows(rows)
+    return output.getvalue()
 
 
 def run() -> None:
@@ -462,7 +541,17 @@ def run() -> None:
                 fieldnames=["user_id", "question_id", "test_id", "exam_id", "answer", "status"],
                 output_path=output_file,
             )
-            review_status.value = f"Exported {len(completed_rows)} completed row(s) to {output_file}."
+
+            if config.web_mode:
+                csv_text = serialize_completed_rows_to_csv(completed_rows)
+                data_uri = f"data:text/csv;charset=utf-8,{quote(csv_text)}"
+                page.launch_url(data_uri, web_window_name="_self")
+                review_status.value = (
+                    f"Exported {len(completed_rows)} completed row(s). Browser download triggered; "
+                    f"server copy saved at {output_file}."
+                )
+            else:
+                review_status.value = f"Exported {len(completed_rows)} completed row(s) to {output_file}."
             page.update()
 
         upload_controls.append(
