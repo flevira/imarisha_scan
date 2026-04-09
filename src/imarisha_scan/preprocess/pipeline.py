@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -56,11 +57,15 @@ class PreprocessPipeline:
         output_root = Path(output_dir)
         output_root.mkdir(parents=True, exist_ok=True)
 
-        processed_name = f"pre_{src.name}"
-        dest = output_root / processed_name
-
-        actions = ["copy"]
-        shutil.copy2(src, dest)
+        actions = []
+        if src.suffix.lower() == ".pdf":
+            dest = self._pdf_first_page_to_png(src, output_root)
+            actions.append("pdf_to_png")
+        else:
+            processed_name = f"pre_{src.name}"
+            dest = output_root / processed_name
+            shutil.copy2(src, dest)
+            actions.append("copy")
 
         # Placeholder transformation labels for visibility in pipeline orchestration.
         if self.config.auto_rotate:
@@ -78,3 +83,32 @@ class PreprocessPipeline:
             actions=tuple(actions),
             quality=quality,
         )
+
+    def _pdf_first_page_to_png(self, src: Path, output_root: Path) -> Path:
+        pdftoppm = shutil.which("pdftoppm")
+        if pdftoppm is None:
+            raise RuntimeError(
+                "PDF OCR requires 'pdftoppm' (Poppler) to rasterize pages before running Tesseract. "
+                "Install Poppler and ensure 'pdftoppm' is on PATH."
+            )
+
+        output_prefix = output_root / f"pre_{src.stem}"
+        subprocess.run(
+            [
+                pdftoppm,
+                "-f",
+                "1",
+                "-singlefile",
+                "-png",
+                str(src),
+                str(output_prefix),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        rendered = output_prefix.with_suffix(".png")
+        if not rendered.exists():
+            raise RuntimeError(f"Failed to render PDF page to image: {rendered}")
+        return rendered
