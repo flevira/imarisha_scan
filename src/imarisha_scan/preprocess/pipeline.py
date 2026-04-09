@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,6 +37,39 @@ class PreprocessResult:
 class PreprocessPipeline:
     def __init__(self, config: PreprocessConfig | None = None) -> None:
         self.config = config or PreprocessConfig()
+
+    @staticmethod
+    def _pdftoppm_candidates() -> list[str]:
+        configured = (os.getenv("IMARISHA_PDFTOPPM_BIN", "")).strip()
+        candidates: list[str] = []
+        if configured:
+            candidates.append(configured)
+
+        candidates.append("pdftoppm")
+
+        if sys.platform == "darwin":
+            executable = Path(sys.executable).resolve()
+            resources_bin = executable.parent.parent / "Resources" / "poppler" / "bin" / "pdftoppm"
+            candidates.extend(
+                [
+                    str(resources_bin),
+                    "/opt/homebrew/bin/pdftoppm",
+                    "/usr/local/bin/pdftoppm",
+                ]
+            )
+        return candidates
+
+    def _resolve_pdftoppm(self) -> str | None:
+        for candidate in self._pdftoppm_candidates():
+            if not candidate:
+                continue
+            candidate_path = Path(candidate)
+            if candidate_path.is_file():
+                return str(candidate_path)
+            resolved = shutil.which(candidate)
+            if resolved:
+                return resolved
+        return None
 
     def assess_quality(self, dpi: int | None) -> QualityAssessment:
         if dpi is None:
@@ -85,30 +120,52 @@ class PreprocessPipeline:
         )
 
     def _pdf_first_page_to_png(self, src: Path, output_root: Path) -> Path:
-        pdftoppm = shutil.which("pdftoppm")
-        if pdftoppm is None:
-            raise RuntimeError(
-                "PDF OCR requires 'pdftoppm' (Poppler) to rasterize pages before running Tesseract. "
-                "Install Poppler and ensure 'pdftoppm' is on PATH."
-            )
-
+        pdftoppm = self._resolve_pdftoppm()
         output_prefix = output_root / f"pre_{src.stem}"
-        subprocess.run(
-            [
-                pdftoppm,
-                "-f",
-                "1",
-                "-singlefile",
-                "-png",
-                str(src),
-                str(output_prefix),
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-
         rendered = output_prefix.with_suffix(".png")
+
+        if pdftoppm is not None:
+            run_env = None
+            pdftoppm_path = Path(pdftoppm)
+            bundled_lib_dir = pdftoppm_path.parent.parent / "lib"
+            if bundled_lib_dir.is_dir() and sys.platform == "darwin":
+                run_env = os.environ.copy()
+                existing = run_env.get("DYLD_LIBRARY_PATH", "").strip()
+                run_env["DYLD_LIBRARY_PATH"] = (
+                    f"{bundled_lib_dir}:{existing}" if existing else str(bundled_lib_dir)
+                )
+
+            subprocess.run(
+                [
+                    pdftoppm,
+                    "-f",
+                    "1",
+                    "-singlefile",
+                    "-png",
+                    str(src),
+                    str(output_prefix),
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+                env=run_env,
+            )
+        else:
+            # macOS fallback for local setups that don't have Poppler installed.
+            sips = shutil.which("sips")
+            if sips is not None:
+                subprocess.run(
+                    [sips, "-s", "format", "png", str(src), "--out", str(rendered)],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+            else:
+                raise RuntimeError(
+                    "PDF OCR could not find a rasterizer. Install Poppler so 'pdftoppm' is on PATH, "
+                    "or use macOS 'sips' for fallback conversion."
+                )
+
         if not rendered.exists():
             raise RuntimeError(f"Failed to render PDF page to image: {rendered}")
         return rendered

@@ -28,6 +28,16 @@ pip install .[ui]
 ./scripts/package_offline_macos_pkg.sh
 ```
 
+### macOS with bundled Poppler (for PDF OCR offline)
+```bash
+# Example Homebrew location:
+POPPLER_STAGING_DIR=/opt/homebrew/opt/poppler ./scripts/package_offline_macos.sh
+./scripts/package_offline_macos_pkg.sh
+```
+
+If `POPPLER_STAGING_DIR` is set, `package_offline_macos.sh` copies Poppler's `bin/` (and optional `lib/`, `share/`)
+into `imarisha-scan.app/Contents/Resources/poppler`, allowing PDF OCR without system-level Poppler install.
+
 ## Output
 - Windows binary: `dist/windows/imarisha-scan.exe`
 - macOS app bundle: `dist/macos/imarisha-scan.app`
