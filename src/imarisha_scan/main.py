@@ -11,6 +11,7 @@ import sys
 
 import importlib
 import importlib.util
+from imarisha_scan.ingest import FolderLifecycleManager, IngestConfig
 
 
 def _bootstrap_import_path() -> None:
@@ -115,21 +116,30 @@ def advance_selected_scan_to_ingestion(
     ingest_root: Path,
     selected_scan_name: str,
 ) -> tuple[Path | None, str]:
-    """Move a selected queued scan from scans -> incoming to continue ingestion."""
+    """Advance selected queued scan into ingestion processing."""
     selected_name = selected_scan_name.strip()
     if not selected_name:
         return None, "Select a queued file first, then click Scan."
+
+    ingest_config = IngestConfig(root_dir=ingest_root, min_batch_size=1, max_wait_seconds=0, stable_cycles=1)
+    lifecycle = FolderLifecycleManager(ingest_config)
+    lifecycle.ensure_directories()
+
     source = ingest_root / "scans" / selected_name
     if not source.exists() or not source.is_file():
         return None, f"Selected file is no longer available: {selected_name}"
-    incoming_dir = ingest_root / "incoming"
-    incoming_dir.mkdir(parents=True, exist_ok=True)
-    target = incoming_dir / source.name
+
+    target = ingest_config.incoming_dir / source.name
     suffix_idx = 1
     while target.exists():
-        target = incoming_dir / f"{source.stem}_{suffix_idx}{source.suffix}"
+        target = ingest_config.incoming_dir / f"{source.stem}_{suffix_idx}{source.suffix}"
         suffix_idx += 1
     source.replace(target)
+
+    if lifecycle.ready_for_batch():
+        staged = lifecycle.stage_batch(limit=1)
+        if staged:
+            return staged[0], f"Ingestion started: {staged[0].name}"
     return target, f"Moved to ingestion queue: {target.name}"
 
 

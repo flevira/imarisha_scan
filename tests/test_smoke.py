@@ -135,10 +135,11 @@ def test_advance_selected_scan_to_ingestion_moves_file(tmp_path) -> None:
 
     target, message = advance_selected_scan_to_ingestion(ingest_root, "scan_1.pdf")
 
-    assert target == ingest_root / "incoming" / "scan_1.pdf"
+    assert target is not None
+    assert target.parent == ingest_root / "processing"
     assert target is not None and target.exists()
     assert not source.exists()
-    assert message == "Moved to ingestion queue: scan_1.pdf"
+    assert message.startswith("Ingestion started:")
 
 
 def test_advance_selected_scan_to_ingestion_rejects_missing_or_empty(tmp_path) -> None:
