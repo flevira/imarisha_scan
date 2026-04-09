@@ -232,6 +232,79 @@ def _normalize_row_dict(raw: dict[str, object], source_file: str) -> ReviewRecor
     )
 
 
+def _build_exam_data_from_qr_payload(payload: str, extractor: AnswerSheetExtractor) -> list[dict[str, str]]:
+    parts = extractor._parse_pairs(payload)  # noqa: SLF001 - internal helper shared for QR parsing consistency.
+    exam_type = parts.get("type", "").upper()
+    student_id = parts.get("user_id", parts.get("userid", parts.get("studentid", "")))
+    test_id = parts.get("test_id", parts.get("testid", ""))
+    exam_id = parts.get("exam_id", parts.get("examid", ""))
+    assessment_id = parts.get("assessmentid", "")
+
+    if exam_type == "TEST" and not test_id:
+        test_id = assessment_id
+    if exam_type == "EXAM" and not exam_id:
+        exam_id = assessment_id
+
+    return [
+        {
+            "exam_type": exam_type,
+            "exam_id": exam_id,
+            "test_id": test_id,
+            "student_id": student_id,
+        }
+    ]
+
+
+def _build_answers_dataset(
+    ocr_text: str,
+    provided_answers: dict[str, str],
+    extractor: AnswerSheetExtractor,
+) -> list[dict[str, str]]:
+    student_id = extractor._extract_user_id(ocr_text)  # noqa: SLF001 - centralized regex parser.
+    question_ids = extractor._extract_question_ids(ocr_text)  # noqa: SLF001 - centralized regex parser.
+    detected_answers = extractor._extract_answers_by_question(ocr_text)  # noqa: SLF001 - centralized regex parser.
+
+    rows: list[dict[str, str]] = []
+    for question_id in question_ids:
+        rows.append(
+            {
+                "student_id": student_id,
+                "question_id": question_id,
+                "answer": provided_answers.get(question_id, detected_answers.get(question_id, "")).strip().upper(),
+            }
+        )
+    return rows
+
+
+def _merge_exam_and_answers_datasets(
+    exam_data: list[dict[str, str]],
+    answers_data: list[dict[str, str]],
+    extractor: AnswerSheetExtractor,
+) -> list[dict[str, str]]:
+    exam_by_student = {row.get("student_id", ""): row for row in exam_data if row.get("student_id", "")}
+    fallback_context = exam_data[0] if len(exam_data) == 1 else None
+    merged_rows: list[dict[str, str]] = []
+
+    for answer_row in answers_data:
+        student_id = answer_row.get("student_id", "")
+        context = exam_by_student.get(student_id)
+        if context is None and fallback_context is not None and not student_id:
+            context = fallback_context
+            student_id = context.get("student_id", "")
+        if context is None:
+            continue
+        merged_row = {
+            "user_id": student_id,
+            "question_id": answer_row.get("question_id", ""),
+            "test_id": context.get("test_id", ""),
+            "exam_id": context.get("exam_id", ""),
+            "answer": answer_row.get("answer", ""),
+        }
+        extractor._validate_row(merged_row, context.get("exam_type", ""))  # noqa: SLF001 - shared row validation.
+        merged_rows.append(merged_row)
+    return merged_rows
+
+
 def _load_rows_from_json_sidecar(file_path: Path) -> list[ReviewRecord]:
     sidecars = [file_path.with_suffix(".json"), file_path.with_suffix(".extracted.json")]
     for sidecar in sidecars:
@@ -321,6 +394,8 @@ def run_ocr_and_extract_for_processing_file(
         ".answers.json",
         ".answers",
     ) or file_path.with_suffix(".answers.json")
+    exam_data_sidecar = file_path.with_suffix(".exam_data.json")
+    answers_data_sidecar = file_path.with_suffix(".answers_data.json")
     extracted_sidecar = file_path.with_suffix(".extracted.json")
 
     ocr_text = ""
@@ -420,13 +495,27 @@ def run_ocr_and_extract_for_processing_file(
         return "OCR generated. answers sidecar must be a JSON object."
 
     normalized_answers = {str(k): str(v) for k, v in answers_payload.items()}
+
+    exam_data = _build_exam_data_from_qr_payload(qr_payload, extractor)
+    answers_data = _build_answers_dataset(ocr_text, normalized_answers, extractor)
+    exam_data_sidecar.write_text(json.dumps(exam_data, indent=2), encoding="utf-8")
+    answers_data_sidecar.write_text(json.dumps(answers_data, indent=2), encoding="utf-8")
+
     try:
-        extracted_rows = extractor.extract_rows(ocr_text, qr_payload, normalized_answers)
+        extracted_rows = _merge_exam_and_answers_datasets(exam_data, answers_data, extractor)
     except ValueError as exc:
-        return f"OCR generated. Extraction pending valid QR/answers: {exc}"
+        return f"OCR generated. Extraction pending valid staged datasets: {exc}"
+    if not extracted_rows:
+        return (
+            "OCR generated. Stage 1 exam_data and Stage 2 answers datasets were created, "
+            "but no merged rows were produced. Confirm matching student_id in QR and body text."
+        )
 
     extracted_sidecar.write_text(json.dumps(extracted_rows, indent=2), encoding="utf-8")
-    return f"OCR and extraction sidecars generated for {file_path.name}."
+    return (
+        f"OCR and extraction sidecars generated for {file_path.name}. "
+        "Created Stage 1 exam_data, Stage 2 answers, then merged by student_id; ready for review."
+    )
 
 
 def rows_from_processing_file(file_path: Path) -> list[ReviewRecord]:
