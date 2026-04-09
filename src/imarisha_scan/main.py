@@ -160,18 +160,26 @@ def run() -> None:
         page.padding = 16
 
         def build_tab(title: str) -> "ft.Tab":
+            """Build tabs compatibly across Flet versions.
+
+            Recent Flet builds validate that each tab has visible content,
+            otherwise the control can error and block interactions.
+            """
+            content = ft.Container(content=ft.Text(title), visible=True)
             tab_variants = (
+                {"text": title, "content": content},
+                {"label": title, "content": content},
+                {"tab_content": ft.Text(title), "content": content},
+                {"content": content},
                 {"text": title},
                 {"label": title},
-                {"tab_content": ft.Text(title)},
-                {"content": ft.Text(title)},
             )
             for kwargs in tab_variants:
                 try:
                     return ft.Tab(**kwargs)
                 except TypeError:
                     continue
-            return ft.Tab(text=title)
+            return ft.Tab(content=content)
 
         def build_tabs_control(on_change: "ft.ControlEventHandler"):
             tabs = [build_tab("Upload"), build_tab("Review")]
