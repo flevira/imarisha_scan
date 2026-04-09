@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from imarisha_scan.main import (
     completed_rows_for_export,
@@ -280,6 +281,62 @@ def test_run_ocr_uses_qr_decoder_payload_when_qr_sidecar_missing(tmp_path, monke
     qr_sidecar = scan_file.with_suffix(".qr.txt")
     extracted_path = scan_file.with_suffix(".extracted.json")
     assert "OCR and extraction sidecars generated" in message
+    assert qr_sidecar.read_text(encoding="utf-8").strip() == "type=EXAM;studentId=82;examId=1756"
+    payload = json.loads(extracted_path.read_text(encoding="utf-8"))
+    assert payload[0]["exam_id"] == "1756"
+    assert payload[0]["answer"] == "D"
+
+
+def test_run_ocr_prefers_preprocessed_image_for_qr_decode(tmp_path, monkeypatch) -> None:
+    ingest_root = tmp_path / "runtime_data"
+    processing = ingest_root / "processing"
+    processing.mkdir(parents=True)
+    scan_file = processing / "sheet_from_pdf.pdf"
+    scan_file.write_text("binary", encoding="utf-8")
+    scan_file.with_suffix(".answers.json").write_text('{"81535":"D"}', encoding="utf-8")
+
+    artifacts_preprocess = ingest_root / "artifacts" / "preprocess"
+    rendered_path = artifacts_preprocess / "pre_sheet_from_pdf.png"
+
+    from imarisha_scan import main as main_module
+    from imarisha_scan.ocr import OcrResult
+    from imarisha_scan.preprocess import PreprocessResult, QualityAssessment
+    from imarisha_scan.qr import QrDecodeResult
+
+    monkeypatch.setattr(main_module.LocalTesseractEngine, "is_available", lambda self: True)
+
+    def fake_preprocess(self, input_path, output_dir, dpi=None):
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        rendered_path.write_text("png", encoding="utf-8")
+        return PreprocessResult(
+            input_path=Path(input_path),
+            output_path=rendered_path,
+            actions=("pdf_to_png",),
+            quality=QualityAssessment(dpi=None, status="warn", reason="test"),
+        )
+
+    monkeypatch.setattr(main_module.PreprocessPipeline, "preprocess_file", fake_preprocess)
+    monkeypatch.setattr(
+        main_module.LocalTesseractEngine,
+        "extract_text",
+        lambda self, image_path, language="eng": OcrResult(text="Student ID: 82\n81535 A B C D E\n", provider="mock"),
+    )
+
+    decode_calls: list[str] = []
+
+    def fake_decode(self, image_path):
+        decode_calls.append(str(image_path))
+        return QrDecodeResult(payload="type=EXAM;studentId=82;examId=1756", backend="mock")
+
+    monkeypatch.setattr(main_module.QrPayloadDecoder, "decode_payload", fake_decode)
+
+    message = run_ocr_and_extract_for_processing_file(ingest_root, scan_file)
+
+    qr_sidecar = scan_file.with_suffix(".qr.txt")
+    extracted_path = scan_file.with_suffix(".extracted.json")
+    assert "OCR and extraction sidecars generated" in message
+    assert decode_calls == [str(rendered_path)]
     assert qr_sidecar.read_text(encoding="utf-8").strip() == "type=EXAM;studentId=82;examId=1756"
     payload = json.loads(extracted_path.read_text(encoding="utf-8"))
     assert payload[0]["exam_id"] == "1756"

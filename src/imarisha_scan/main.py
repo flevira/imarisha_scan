@@ -399,6 +399,7 @@ def run_ocr_and_extract_for_processing_file(
     extracted_sidecar = file_path.with_suffix(".extracted.json")
 
     ocr_text = ""
+    qr_decode_candidates: list[Path] = [file_path]
     if ocr_sidecar.exists() and ocr_sidecar.is_file():
         try:
             ocr_text = ocr_sidecar.read_text(encoding="utf-8")
@@ -430,6 +431,7 @@ def run_ocr_and_extract_for_processing_file(
         except Exception as exc:
             return f"OCR failed for {file_path.name}: {exc}"
         ocr_text = record.text
+        qr_decode_candidates.insert(0, Path(record.processed_path))
         ocr_sidecar.write_text(ocr_text, encoding="utf-8")
 
     extractor = AnswerSheetExtractor()
@@ -439,7 +441,16 @@ def run_ocr_and_extract_for_processing_file(
 
     missing_sidecars: list[str] = []
     if not qr_sidecar.exists():
-        decoded_payload = qr_decoder.decode_payload(file_path)
+        decoded_payload = None
+        seen_sources: set[Path] = set()
+        for source in qr_decode_candidates:
+            if source in seen_sources or not source.exists() or not source.is_file():
+                continue
+            seen_sources.add(source)
+            decoded_payload = qr_decoder.decode_payload(source)
+            if decoded_payload and decoded_payload.payload:
+                break
+
         if decoded_payload and decoded_payload.payload:
             qr_sidecar.write_text(decoded_payload.payload, encoding="utf-8")
         elif inferred_qr_payload:
