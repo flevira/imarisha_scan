@@ -214,3 +214,22 @@ def test_run_ocr_unavailable_message_includes_env_var_hint(tmp_path, monkeypatch
 
     assert "IMARISHA_TESSERACT_BIN" in message
     assert "Alternative" in message
+
+
+def test_run_ocr_creates_placeholder_sidecars_when_qr_and_answers_missing(tmp_path) -> None:
+    ingest_root = tmp_path / "runtime_data"
+    processing = ingest_root / "processing"
+    processing.mkdir(parents=True)
+    scan_file = processing / "sheet_006.jpg"
+    scan_file.write_text("binary", encoding="utf-8")
+    scan_file.with_suffix(".ocr.txt").write_text("Student ID: 82\n81535 A B C D E\n", encoding="utf-8")
+
+    message = run_ocr_and_extract_for_processing_file(ingest_root, scan_file)
+
+    qr_sidecar = scan_file.with_suffix(".qr.txt")
+    answers_sidecar = scan_file.with_suffix(".answers.json")
+    assert "Created placeholder sidecars" in message
+    assert qr_sidecar.exists()
+    assert answers_sidecar.exists()
+    assert qr_sidecar.read_text(encoding="utf-8").strip() == "type=EXAM;studentId=;examId="
+    assert json.loads(answers_sidecar.read_text(encoding="utf-8")) == {}

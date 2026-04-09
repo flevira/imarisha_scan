@@ -352,7 +352,17 @@ def run_ocr_and_extract_for_processing_file(ingest_root: Path, file_path: Path) 
         ocr_sidecar.write_text(ocr_text, encoding="utf-8")
 
     if not (qr_sidecar.exists() and answers_sidecar.exists()):
-        return "OCR generated. Awaiting QR/answers sidecars to build extracted rows."
+        missing_sidecars: list[str] = []
+        if not qr_sidecar.exists():
+            missing_sidecars.append(qr_sidecar.name)
+            qr_sidecar.write_text("type=EXAM;studentId=;examId=", encoding="utf-8")
+        if not answers_sidecar.exists():
+            missing_sidecars.append(answers_sidecar.name)
+            answers_sidecar.write_text("{}", encoding="utf-8")
+        return (
+            "OCR generated. Created placeholder sidecars for missing metadata "
+            f"({', '.join(missing_sidecars)}). Update these files and click Scan again to build extracted rows."
+        )
 
     try:
         qr_payload = qr_sidecar.read_text(encoding="utf-8").strip()
