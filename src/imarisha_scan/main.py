@@ -91,6 +91,17 @@ def get_ingest_root_dir() -> Path:
     return (Path.home() / ".imarisha_scan" / "runtime_data").resolve()
 
 
+def normalize_upload_path(path_text: str) -> str:
+    """Normalize a manually entered path from the upload text field."""
+    trimmed = path_text.strip()
+    if len(trimmed) >= 2:
+        quote_pairs = (("'", "'"), ('"', '"'), ("“", "”"))
+        for start_quote, end_quote in quote_pairs:
+            if trimmed.startswith(start_quote) and trimmed.endswith(end_quote):
+                return trimmed[1:-1].strip()
+    return trimmed
+
+
 def get_runtime_config() -> RuntimeConfig:
     """Resolve runtime mode from environment variables."""
     port = int(os.getenv("PORT", "8550"))
@@ -300,7 +311,7 @@ def run() -> None:
         ]
 
         def add_path(_: ft.ControlEvent) -> None:
-            source_path = (manual_path_input.value or "").strip()
+            source_path = normalize_upload_path(manual_path_input.value or "")
             if not source_path:
                 refresh_upload_status("Enter a file or folder path first.")
                 page.update()
