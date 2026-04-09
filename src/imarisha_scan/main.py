@@ -8,9 +8,30 @@ import tempfile
 from dataclasses import dataclass
 import inspect
 from pathlib import Path
+import sys
 
 import importlib
 import importlib.util
+
+
+def _bootstrap_import_path() -> None:
+    """Ensure local package imports resolve in bundled/script execution modes."""
+    current_file = Path(__file__).resolve()
+    search_roots = [current_file.parent, *current_file.parents]
+    candidates: list[Path] = []
+    for root in search_roots:
+        candidates.extend((root, root / "src"))
+
+    for candidate in candidates:
+        package_dir = candidate / "imarisha_scan"
+        if package_dir.is_dir() and (package_dir / "__init__.py").is_file():
+            candidate_str = str(candidate)
+            if candidate_str not in sys.path:
+                sys.path.insert(0, candidate_str)
+            return
+
+
+_bootstrap_import_path()
 from imarisha_scan.ui import ReviewRecord, ReviewSession
 
 
