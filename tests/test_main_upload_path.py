@@ -286,13 +286,13 @@ def test_run_ocr_uses_qr_decoder_payload_when_qr_sidecar_missing(tmp_path, monke
     assert payload[0]["answer"] == "D"
 
 
-def test_run_ocr_sidecar_mode_prefers_existing_qr_sidecar(tmp_path, monkeypatch) -> None:
+def test_run_ocr_uses_existing_qr_sidecar_and_common_student_id(tmp_path, monkeypatch) -> None:
     ingest_root = tmp_path / "runtime_data"
     processing = ingest_root / "processing"
     processing.mkdir(parents=True)
     scan_file = processing / "sheet_sidecar_mode.jpg"
     scan_file.write_text("binary", encoding="utf-8")
-    scan_file.with_suffix(".ocr.txt").write_text("Student ID: 82\n81535 A B C D E\n", encoding="utf-8")
+    scan_file.with_suffix(".ocr.txt").write_text("Student ID: 999\n81535 A B C D E\n", encoding="utf-8")
     scan_file.with_suffix(".qr.txt").write_text("type=EXAM;studentId=82;examId=SIDECAR", encoding="utf-8")
     scan_file.with_suffix(".answers.json").write_text('{"81535":"A"}', encoding="utf-8")
 
@@ -301,18 +301,19 @@ def test_run_ocr_sidecar_mode_prefers_existing_qr_sidecar(tmp_path, monkeypatch)
     monkeypatch.setattr(
         main_module.QrPayloadDecoder,
         "decode_payload",
-        lambda self, image_path: (_ for _ in ()).throw(AssertionError("decoder should not run in sidecar mode")),
+        lambda self, image_path: (_ for _ in ()).throw(AssertionError("decoder should not run when QR sidecar exists")),
     )
 
-    message = run_ocr_and_extract_for_processing_file(ingest_root, scan_file, qr_source_mode="sidecar")
+    message = run_ocr_and_extract_for_processing_file(ingest_root, scan_file)
 
     extracted_path = scan_file.with_suffix(".extracted.json")
     assert "OCR and extraction sidecars generated" in message
     payload = json.loads(extracted_path.read_text(encoding="utf-8"))
     assert payload[0]["exam_id"] == "SIDECAR"
+    assert payload[0]["user_id"] == "82"
 
 
-def test_run_ocr_qr_image_mode_overwrites_existing_qr_sidecar(tmp_path, monkeypatch) -> None:
+def test_run_ocr_keeps_existing_qr_sidecar_without_overwrite(tmp_path, monkeypatch) -> None:
     ingest_root = tmp_path / "runtime_data"
     processing = ingest_root / "processing"
     processing.mkdir(parents=True)
@@ -323,22 +324,20 @@ def test_run_ocr_qr_image_mode_overwrites_existing_qr_sidecar(tmp_path, monkeypa
     scan_file.with_suffix(".answers.json").write_text('{"81535":"B"}', encoding="utf-8")
 
     from imarisha_scan import main as main_module
-    from imarisha_scan.qr import QrDecodeResult
-
     monkeypatch.setattr(
         main_module.QrPayloadDecoder,
         "decode_payload",
-        lambda self, image_path: QrDecodeResult(payload="type=EXAM;studentId=82;examId=QRMODE", backend="mock"),
+        lambda self, image_path: (_ for _ in ()).throw(AssertionError("decoder should not run when QR sidecar exists")),
     )
 
-    message = run_ocr_and_extract_for_processing_file(ingest_root, scan_file, qr_source_mode="qr_image")
+    message = run_ocr_and_extract_for_processing_file(ingest_root, scan_file)
 
     qr_sidecar = scan_file.with_suffix(".qr.txt")
     extracted_path = scan_file.with_suffix(".extracted.json")
     assert "OCR and extraction sidecars generated" in message
-    assert qr_sidecar.read_text(encoding="utf-8").strip() == "type=EXAM;studentId=82;examId=QRMODE"
+    assert qr_sidecar.read_text(encoding="utf-8").strip() == "type=EXAM;studentId=82;examId=SIDECAR"
     payload = json.loads(extracted_path.read_text(encoding="utf-8"))
-    assert payload[0]["exam_id"] == "QRMODE"
+    assert payload[0]["exam_id"] == "SIDECAR"
 
 
 def test_run_ocr_uses_inferred_qr_and_answers_from_ocr_text(tmp_path) -> None:
