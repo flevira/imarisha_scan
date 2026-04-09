@@ -102,6 +102,15 @@ def normalize_upload_path(path_text: str) -> str:
     return trimmed
 
 
+def pick_default_scan_file(file_names: list[str], current_selection: str | None) -> str | None:
+    """Return the queue selection to keep in the file selector."""
+    if not file_names:
+        return None
+    if current_selection and current_selection in file_names:
+        return current_selection
+    return file_names[0]
+
+
 def get_runtime_config() -> RuntimeConfig:
     """Resolve runtime mode from environment variables."""
     port = int(os.getenv("PORT", "8550"))
@@ -183,6 +192,12 @@ def run() -> None:
 
         summary = ft.Text(size=14)
         upload_status = ft.Text(size=13)
+        queued_file_selector = ft.Dropdown(
+            label="Queued file",
+            hint_text="Select a queued scan to start",
+            expand=True,
+            dense=True,
+        )
         manual_path_input = ft.TextField(
             label="File or folder path",
             hint_text="Paste a full path to a PDF/image file or a folder containing scans",
@@ -196,7 +211,10 @@ def run() -> None:
             initialize_file_picker(ft, page)
 
         def refresh_upload_status(message: str | None = None) -> None:
-            file_count = sum(1 for p in scans_dir.iterdir() if p.is_file())
+            queue_files = sorted(p.name for p in scans_dir.iterdir() if p.is_file())
+            file_count = len(queue_files)
+            queued_file_selector.options = [ft.dropdown.Option(name) for name in queue_files]
+            queued_file_selector.value = pick_default_scan_file(queue_files, queued_file_selector.value)
             parts = [
                 f"Upload folder: {scans_dir}",
                 f"Files queued: {file_count}",
@@ -325,16 +343,27 @@ def run() -> None:
                 refresh_upload_status(f"Added {copied} file(s) from path.")
             page.update()
 
+        def start_scan(_: ft.ControlEvent) -> None:
+            selected_file = queued_file_selector.value
+            if not selected_file:
+                refresh_upload_status("Select a queued file first, then click Scan.")
+                page.update()
+                return
+            refresh_upload_status(f"Starting workflow for: {selected_file}")
+            switch_view("review")
+            page.update()
+
         upload_controls.append(
             ft.Row(
                 [
                     manual_path_input,
                     ft.Button("Add Path", on_click=add_path),
                     ft.Button("Refresh", on_click=lambda _: (refresh_upload_status(), page.update())),
-                    ft.Button("Scan", on_click=lambda _: switch_view("review")),
+                    ft.Button("Scan", on_click=start_scan),
                 ]
             )
         )
+        upload_controls.append(queued_file_selector)
 
         upload_controls.append(upload_status)
 
