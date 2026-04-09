@@ -4,7 +4,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from imarisha_scan.scanner import FolderImportAdapter, WindowsTwainAdapter, WindowsWiaAdapter
+try:
+    from imarisha_scan.scanner import FolderImportAdapter, WindowsTwainAdapter, WindowsWiaAdapter
+except ModuleNotFoundError:
+    from scanner import FolderImportAdapter, WindowsTwainAdapter, WindowsWiaAdapter  # type: ignore[no-redef]
 
 
 @dataclass(frozen=True)
