@@ -44,6 +44,7 @@ except ModuleNotFoundError:
         exam_id: str
         answer: str
         status: str = "pending"
+        source_file: str = ""
 
 
     class ReviewSession:
@@ -196,6 +197,7 @@ def _record_from_processing_file(file_path: Path) -> ReviewRecord:
         test_id="",
         exam_id="",
         answer=answer_guess,
+        source_file=file_path.name,
     )
 
 
@@ -206,6 +208,22 @@ def load_review_session(ingest_root: Path) -> ReviewSession:
     lifecycle.ensure_directories()
     rows = [_record_from_processing_file(item) for item in sorted(ingest_config.processing_dir.iterdir()) if item.is_file()]
     return ReviewSession(rows)
+
+
+def completed_rows_for_export(session: ReviewSession) -> list[dict[str, str]]:
+    """Return completed review rows (approved/rejected) serialized for CSV export."""
+    return [
+        {
+            "user_id": row.user_id,
+            "question_id": row.question_id,
+            "test_id": row.test_id,
+            "exam_id": row.exam_id,
+            "answer": row.answer,
+            "status": row.status,
+        }
+        for row in session.rows
+        if row.status in {"approved", "rejected"}
+    ]
 
 
 def run() -> None:
@@ -402,47 +420,39 @@ def run() -> None:
         def refresh_review(_: ft.ControlEvent | None = None) -> None:
             nonlocal session
             refreshed = load_review_session(ingest_root)
-            for idx, current_row in enumerate(session.rows):
-                if idx < len(refreshed.rows):
-                    refreshed.rows[idx] = replace(
-                        refreshed.rows[idx],
-                        user_id=current_row.user_id,
-                        question_id=current_row.question_id,
-                        test_id=current_row.test_id,
-                        exam_id=current_row.exam_id,
-                        answer=current_row.answer,
-                        status=current_row.status,
-                    )
+            persisted_rows_by_source = {row.source_file: row for row in session.rows}
+            for idx, refreshed_row in enumerate(refreshed.rows):
+                current_row = persisted_rows_by_source.get(refreshed_row.source_file)
+                if current_row is None:
+                    continue
+                refreshed.rows[idx] = replace(
+                    refreshed_row,
+                    user_id=current_row.user_id,
+                    question_id=current_row.question_id,
+                    test_id=current_row.test_id,
+                    exam_id=current_row.exam_id,
+                    answer=current_row.answer,
+                    status=current_row.status,
+                )
             session = refreshed
             render()
             page.update()
 
         def export_review(_: ft.ControlEvent) -> None:
-            approved_rows = [
-                {
-                    "user_id": row.user_id,
-                    "question_id": row.question_id,
-                    "test_id": row.test_id,
-                    "exam_id": row.exam_id,
-                    "answer": row.answer,
-                    "status": row.status,
-                }
-                for row in session.rows
-                if row.status == "approved"
-            ]
-            if not approved_rows:
-                review_status.value = "No approved rows to export yet."
+            completed_rows = completed_rows_for_export(session)
+            if not completed_rows:
+                review_status.value = "No completed rows to export yet. Approve or reject at least one row first."
                 page.update()
                 return
 
             output_file = ingest_root / "exports" / "review_export.csv"
             exporter = CsvExporter()
             exporter.export_rows(
-                rows=approved_rows,
+                rows=completed_rows,
                 fieldnames=["user_id", "question_id", "test_id", "exam_id", "answer", "status"],
                 output_path=output_file,
             )
-            review_status.value = f"Exported {len(approved_rows)} approved row(s) to {output_file}."
+            review_status.value = f"Exported {len(completed_rows)} completed row(s) to {output_file}."
             page.update()
 
         upload_controls.append(
@@ -471,7 +481,7 @@ def run() -> None:
                 ft.Row(
                     [
                         ft.Button("Refresh Review Queue", on_click=refresh_review),
-                        ft.Button("Export Approved", on_click=export_review),
+                        ft.Button("Export Completed to CSV", on_click=export_review),
                     ]
                 ),
                 review_status,
