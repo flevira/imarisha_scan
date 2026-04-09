@@ -150,3 +150,50 @@ def test_run_ocr_and_extract_for_processing_file_creates_extracted_sidecar(tmp_p
     payload = json.loads(extracted_path.read_text(encoding="utf-8"))
     assert [row["question_id"] for row in payload] == ["81535", "81570"]
     assert [row["answer"] for row in payload] == ["A", "D"]
+
+
+def test_load_review_session_supports_legacy_sidecar_extensions(tmp_path) -> None:
+    ingest_root = tmp_path / "runtime_data"
+    processing = ingest_root / "processing"
+    processing.mkdir(parents=True)
+    scan_file = processing / "sheet_004.jpg"
+    scan_file.write_text("binary", encoding="utf-8")
+    scan_file.with_suffix(".ocr").write_text(
+        "Student ID: 82\n81535 A B C D E\n81570 A B C D E\n",
+        encoding="utf-8",
+    )
+    scan_file.with_suffix(".qr").write_text("type=EXAM;studentId=82;examId=1756", encoding="utf-8")
+    scan_file.with_suffix(".answers").write_text('{"81535":"A","81570":"D"}', encoding="utf-8")
+
+    session = load_review_session(ingest_root)
+
+    assert len(session.rows) == 2
+    assert [row.question_id for row in session.rows] == ["81535", "81570"]
+    assert [row.answer for row in session.rows] == ["A", "D"]
+
+
+def test_run_ocr_uses_sidecars_for_original_name_after_staging_prefix(tmp_path) -> None:
+    ingest_root = tmp_path / "runtime_data"
+    processing = ingest_root / "processing"
+    scans = ingest_root / "scans"
+    processing.mkdir(parents=True)
+    scans.mkdir(parents=True)
+
+    staged_file = processing / "20260409135533_SMARTREPO.pdf"
+    staged_file.write_text("binary", encoding="utf-8")
+
+    original_scan = scans / "SMARTREPO.pdf"
+    original_scan.write_text("binary", encoding="utf-8")
+    original_scan.with_suffix(".ocr").write_text(
+        "Student ID: 82\n81535 A B C D E\n81570 A B C D E\n",
+        encoding="utf-8",
+    )
+    original_scan.with_suffix(".qr").write_text("type=EXAM;studentId=82;examId=1756", encoding="utf-8")
+    original_scan.with_suffix(".answers").write_text('{"81535":"A","81570":"D"}', encoding="utf-8")
+
+    message = run_ocr_and_extract_for_processing_file(ingest_root, staged_file)
+
+    extracted_path = staged_file.with_suffix(".extracted.json")
+    assert "OCR and extraction sidecars generated" in message
+    payload = json.loads(extracted_path.read_text(encoding="utf-8"))
+    assert [row["question_id"] for row in payload] == ["81535", "81570"]
