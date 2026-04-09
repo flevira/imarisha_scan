@@ -4,13 +4,13 @@ from imarisha_scan.ui import ReviewRecord, ReviewSession
 def test_review_session_edit_approve_reject() -> None:
     session = ReviewSession(
         [
-            ReviewRecord(user_id="82", question_id="81535", test_id="", exam_id="1756", answer="C"),
-            ReviewRecord(user_id="82", question_id="81570", test_id="", exam_id="1756", answer="A"),
+            ReviewRecord(exam_type="EXAM", user_id="82", test_id="", exam_id="1756"),
+            ReviewRecord(exam_type="EXAM", user_id="82", test_id="", exam_id="1756"),
         ]
     )
 
-    session.update_field(0, "answer", "B")
-    assert session.rows[0].answer == "B"
+    session.update_field(0, "exam_id", "2001")
+    assert session.rows[0].exam_id == "2001"
 
     session.approve(0)
     session.reject(1)

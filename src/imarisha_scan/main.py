@@ -61,11 +61,10 @@ except ModuleNotFoundError:
     except ModuleNotFoundError:
         @dataclass(frozen=True)
         class ReviewRecord:
+            exam_type: str
             user_id: str
-            question_id: str
             test_id: str
             exam_id: str
-            answer: str
             status: str = "pending"
             source_file: str = ""
 
@@ -233,22 +232,20 @@ def initialize_file_picker(ft_module, page) -> object | None:
 def _record_from_processing_file(file_path: Path) -> ReviewRecord:
     """Create a fallback review record when extraction artifacts are unavailable."""
     return ReviewRecord(
+        exam_type="",
         user_id="",
-        question_id="",
         test_id="",
         exam_id="",
-        answer="",
         source_file=file_path.name,
     )
 
 
 def _normalize_row_dict(raw: dict[str, object], source_file: str) -> ReviewRecord:
     return ReviewRecord(
+        exam_type=str(raw.get("exam_type", "")).strip().upper(),
         user_id=str(raw.get("user_id", "")).strip(),
-        question_id=str(raw.get("question_id", "")).strip(),
         test_id=str(raw.get("test_id", "")).strip(),
         exam_id=str(raw.get("exam_id", "")).strip(),
-        answer=str(raw.get("answer", "")).strip().upper(),
         status=str(raw.get("status", "pending")).strip() or "pending",
         source_file=source_file,
     )
@@ -275,57 +272,6 @@ def _build_exam_data_from_qr_payload(payload: str, extractor: AnswerSheetExtract
             "student_id": student_id,
         }
     ]
-
-
-def _build_answers_dataset(
-    ocr_text: str,
-    provided_answers: dict[str, str],
-    student_id: str,
-    extractor: AnswerSheetExtractor,
-) -> list[dict[str, str]]:
-    question_ids = extractor._extract_question_ids(ocr_text)  # noqa: SLF001 - centralized regex parser.
-    detected_answers = extractor._extract_answers_by_question(ocr_text)  # noqa: SLF001 - centralized regex parser.
-    merged_question_ids = sorted({*question_ids, *provided_answers.keys(), *detected_answers.keys()}, key=str)
-
-    rows: list[dict[str, str]] = []
-    for question_id in merged_question_ids:
-        rows.append(
-            {
-                "student_id": student_id,
-                "question_id": question_id,
-                "answer": provided_answers.get(question_id, detected_answers.get(question_id, "")).strip().upper(),
-            }
-        )
-    return rows
-
-
-def _merge_exam_and_answers_datasets(
-    exam_data: list[dict[str, str]],
-    answers_data: list[dict[str, str]],
-    extractor: AnswerSheetExtractor,
-) -> list[dict[str, str]]:
-    exam_by_student = {row.get("student_id", ""): row for row in exam_data if row.get("student_id", "")}
-    fallback_context = exam_data[0] if len(exam_data) == 1 else None
-    merged_rows: list[dict[str, str]] = []
-
-    for answer_row in answers_data:
-        student_id = answer_row.get("student_id", "")
-        context = exam_by_student.get(student_id)
-        if context is None and fallback_context is not None and not student_id:
-            context = fallback_context
-            student_id = context.get("student_id", "")
-        if context is None:
-            continue
-        merged_row = {
-            "user_id": student_id,
-            "question_id": answer_row.get("question_id", ""),
-            "test_id": context.get("test_id", ""),
-            "exam_id": context.get("exam_id", ""),
-            "answer": answer_row.get("answer", ""),
-        }
-        extractor._validate_row(merged_row, context.get("exam_type", ""))  # noqa: SLF001 - shared row validation.
-        merged_rows.append(merged_row)
-    return merged_rows
 
 
 def _load_rows_from_json_sidecar(file_path: Path) -> list[ReviewRecord]:
@@ -375,22 +321,15 @@ def _find_sidecar_for_processing_file(ingest_root: Path, file_path: Path, *suffi
 
 
 def _load_rows_from_text_sidecars(file_path: Path) -> list[ReviewRecord]:
-    ocr_sidecar = _pick_existing_sidecar(file_path, ".ocr.txt", ".ocr")
     qr_sidecar = _pick_existing_sidecar(file_path, ".qr.txt", ".qr")
-    answers_sidecar = _pick_existing_sidecar(file_path, ".answers.json", ".answers")
-    if ocr_sidecar is None or qr_sidecar is None or answers_sidecar is None:
+    if qr_sidecar is None:
         return []
     try:
-        ocr_text = ocr_sidecar.read_text(encoding="utf-8")
         qr_payload = qr_sidecar.read_text(encoding="utf-8").strip()
-        answers = json.loads(answers_sidecar.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except OSError:
         return []
-    if not isinstance(answers, dict):
-        return []
-    normalized_answers = {str(k): str(v) for k, v in answers.items()}
     try:
-        extracted_rows = AnswerSheetExtractor().extract_rows(ocr_text, qr_payload, normalized_answers)
+        extracted_rows = AnswerSheetExtractor().extract_rows("", qr_payload, None)
     except ValueError:
         return []
     return [_normalize_row_dict(item, file_path.name) for item in extracted_rows]
@@ -410,14 +349,7 @@ def run_ocr_and_extract_for_processing_file(
     qr_sidecar = (
         _find_sidecar_for_processing_file(ingest_root, file_path, ".qr.txt", ".qr") or file_path.with_suffix(".qr.txt")
     )
-    answers_sidecar = _find_sidecar_for_processing_file(
-        ingest_root,
-        file_path,
-        ".answers.json",
-        ".answers",
-    ) or file_path.with_suffix(".answers.json")
     exam_data_sidecar = file_path.with_suffix(".exam_data.json")
-    answers_data_sidecar = file_path.with_suffix(".answers_data.json")
     extracted_sidecar = file_path.with_suffix(".extracted.json")
 
     ocr_text = ""
@@ -429,13 +361,14 @@ def run_ocr_and_extract_for_processing_file(
         except OSError:
             ocr_text = ""
 
-    if not ocr_text.strip():
+    has_qr_sidecar = qr_sidecar.exists() and qr_sidecar.is_file()
+    if not ocr_text.strip() and not has_qr_sidecar:
         engine = LocalTesseractEngine()
         if not engine.is_available():
             return (
                 "OCR not run (Tesseract unavailable). Install Tesseract and ensure it is on PATH, "
                 "or set IMARISHA_TESSERACT_BIN to its full executable path. "
-                "Alternative: add .ocr/.qr/.answers or .ocr.txt/.qr.txt/.answers.json sidecars for extraction."
+                "Alternative: add a .qr/.qr.txt sidecar for extraction."
             )
 
         artifacts_dir = ingest_root / "artifacts"
@@ -475,7 +408,6 @@ def run_ocr_and_extract_for_processing_file(
     extractor = AnswerSheetExtractor()
     qr_decoder = QrPayloadDecoder()
     inferred_qr_payload = extractor.infer_qr_payload_from_text(ocr_text)
-    inferred_answers = extractor.infer_answers_from_text(ocr_text)
 
     missing_sidecars: list[str] = []
     if not qr_sidecar.exists():
@@ -496,51 +428,32 @@ def run_ocr_and_extract_for_processing_file(
         else:
             missing_sidecars.append(qr_sidecar.name)
             qr_sidecar.write_text("type=EXAM;studentId=;examId=", encoding="utf-8")
-    if not answers_sidecar.exists():
-        if inferred_answers:
-            answers_sidecar.write_text(json.dumps(inferred_answers, indent=2), encoding="utf-8")
-        else:
-            missing_sidecars.append(answers_sidecar.name)
-            answers_sidecar.write_text("{}", encoding="utf-8")
     if missing_sidecars:
         return (
             "OCR generated. Created placeholder sidecars for missing metadata "
-            f"({', '.join(missing_sidecars)}). Required fields are: QR -> type, studentId/user_id, and examId/testId; "
-            "Rows -> question_id and answer (A-E). Fill the QR file with "
-            "'type=EXAM;studentId=<student_id>;examId=<exam_id>' and the answers file with "
-            "a JSON object (for example {\"81535\":\"A\"}), then click Scan again to build extracted rows."
+            f"({', '.join(missing_sidecars)}). Required QR fields are: type, studentId/user_id, and examId/testId. "
+            "Fill the QR file with 'type=EXAM;studentId=<student_id>;examId=<exam_id>' and click Scan again."
         )
 
     try:
         qr_payload = qr_sidecar.read_text(encoding="utf-8").strip()
-        answers_payload = json.loads(answers_sidecar.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except OSError as exc:
         return f"OCR generated. Could not parse sidecars: {exc}"
-    if not isinstance(answers_payload, dict):
-        return "OCR generated. answers sidecar must be a JSON object."
-
-    normalized_answers = {str(k): str(v) for k, v in answers_payload.items()}
 
     exam_data = _build_exam_data_from_qr_payload(qr_payload, extractor)
-    qr_student_id = exam_data[0].get("student_id", "") if exam_data else ""
-    answers_data = _build_answers_dataset(ocr_text, normalized_answers, qr_student_id, extractor)
     exam_data_sidecar.write_text(json.dumps(exam_data, indent=2), encoding="utf-8")
-    answers_data_sidecar.write_text(json.dumps(answers_data, indent=2), encoding="utf-8")
 
     try:
-        extracted_rows = _merge_exam_and_answers_datasets(exam_data, answers_data, extractor)
+        extracted_rows = extractor.extract_rows("", qr_payload, None)
     except ValueError as exc:
-        return f"OCR generated. Extraction pending valid staged datasets: {exc}"
+        return f"OCR generated. Extraction pending valid QR metadata: {exc}"
     if not extracted_rows:
-        return (
-            "OCR generated. Stage 1 exam_data and Stage 2 answers datasets were created, "
-            "but no merged rows were produced. Confirm the QR sidecar includes student_id and body text includes question_id/answer pairs."
-        )
+        return "OCR generated. No QR metadata rows were produced."
 
     extracted_sidecar.write_text(json.dumps(extracted_rows, indent=2), encoding="utf-8")
     return (
         f"OCR and extraction sidecars generated for {file_path.name}. "
-        "Created Stage 1 exam_data, Stage 2 answers, then merged by student_id; ready for review."
+        "Extracted QR metadata only (exam_type, user_id, exam_id, test_id); ready for review."
     )
 
 
@@ -572,11 +485,10 @@ def completed_rows_for_export(session: ReviewSession) -> list[dict[str, str]]:
     """Return completed review rows (approved/rejected) serialized for CSV export."""
     return [
         {
+            "exam_type": row.exam_type,
             "user_id": row.user_id,
-            "question_id": row.question_id,
             "test_id": row.test_id,
             "exam_id": row.exam_id,
-            "answer": row.answer,
             "status": row.status,
         }
         for row in session.rows
@@ -587,7 +499,7 @@ def completed_rows_for_export(session: ReviewSession) -> list[dict[str, str]]:
 def serialize_completed_rows_to_csv(rows: list[dict[str, str]]) -> str:
     """Serialize completed rows into CSV text for browser download."""
     output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=["user_id", "question_id", "test_id", "exam_id", "answer", "status"])
+    writer = csv.DictWriter(output, fieldnames=["exam_type", "user_id", "test_id", "exam_id", "status"])
     writer.writeheader()
     writer.writerows(rows)
     return output.getvalue()
@@ -698,11 +610,10 @@ def run() -> None:
 
             header = ft.Row(
                 [
+                    ft.Text("exam_type", width=100, weight=ft.FontWeight.BOLD),
                     ft.Text("user_id", width=100, weight=ft.FontWeight.BOLD),
-                    ft.Text("question_id", width=110, weight=ft.FontWeight.BOLD),
                     ft.Text("test_id", width=100, weight=ft.FontWeight.BOLD),
                     ft.Text("exam_id", width=100, weight=ft.FontWeight.BOLD),
-                    ft.Text("answer", width=80, weight=ft.FontWeight.BOLD),
                     ft.Text("status", width=80, weight=ft.FontWeight.BOLD),
                     ft.Text("actions", width=180, weight=ft.FontWeight.BOLD),
                 ]
@@ -732,11 +643,10 @@ def run() -> None:
                 grid_container.controls.append(
                     ft.Row(
                         [
+                            ft.TextField(value=row.exam_type, width=100, dense=True, on_change=mk_on_change("exam_type", idx)),
                             ft.TextField(value=row.user_id, width=100, dense=True, on_change=mk_on_change("user_id", idx)),
-                            ft.TextField(value=row.question_id, width=110, dense=True, on_change=mk_on_change("question_id", idx)),
                             ft.TextField(value=row.test_id, width=100, dense=True, on_change=mk_on_change("test_id", idx)),
                             ft.TextField(value=row.exam_id, width=100, dense=True, on_change=mk_on_change("exam_id", idx)),
-                            ft.TextField(value=row.answer, width=80, dense=True, on_change=mk_on_change("answer", idx)),
                             ft.Text(row.status, width=80),
                             ft.Row(
                                 [
@@ -760,7 +670,7 @@ def run() -> None:
                 "This replaces the file picker to avoid unsupported runtime controls.",
                 size=13,
             ),
-            ft.Text("Scanning runs in two explicit stages: Stage 1 extracts QR metadata, then Stage 2 extracts body answers.", size=13),
+            ft.Text("Scanning extracts QR metadata only (exam type, student ID, exam ID, test ID).", size=13),
         ]
 
         def add_path(_: ft.ControlEvent) -> None:
@@ -803,11 +713,10 @@ def run() -> None:
                     continue
                 refreshed.rows[idx] = replace(
                     refreshed_row,
+                    exam_type=current_row.exam_type,
                     user_id=current_row.user_id,
-                    question_id=current_row.question_id,
                     test_id=current_row.test_id,
                     exam_id=current_row.exam_id,
-                    answer=current_row.answer,
                     status=current_row.status,
                 )
             session = refreshed
@@ -825,7 +734,7 @@ def run() -> None:
             exporter = CsvExporter()
             exporter.export_rows(
                 rows=completed_rows,
-                fieldnames=["user_id", "question_id", "test_id", "exam_id", "answer", "status"],
+                fieldnames=["exam_type", "user_id", "test_id", "exam_id", "status"],
                 output_path=output_file,
             )
 
