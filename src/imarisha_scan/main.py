@@ -351,17 +351,28 @@ def run_ocr_and_extract_for_processing_file(ingest_root: Path, file_path: Path) 
         ocr_text = record.text
         ocr_sidecar.write_text(ocr_text, encoding="utf-8")
 
-    if not (qr_sidecar.exists() and answers_sidecar.exists()):
-        missing_sidecars: list[str] = []
-        if not qr_sidecar.exists():
+    extractor = AnswerSheetExtractor()
+    inferred_qr_payload = extractor.infer_qr_payload_from_text(ocr_text)
+    inferred_answers = extractor.infer_answers_from_text(ocr_text)
+
+    missing_sidecars: list[str] = []
+    if not qr_sidecar.exists():
+        if inferred_qr_payload:
+            qr_sidecar.write_text(inferred_qr_payload, encoding="utf-8")
+        else:
             missing_sidecars.append(qr_sidecar.name)
             qr_sidecar.write_text("type=EXAM;studentId=;examId=", encoding="utf-8")
-        if not answers_sidecar.exists():
+    if not answers_sidecar.exists():
+        if inferred_answers:
+            answers_sidecar.write_text(json.dumps(inferred_answers, indent=2), encoding="utf-8")
+        else:
             missing_sidecars.append(answers_sidecar.name)
             answers_sidecar.write_text("{}", encoding="utf-8")
+    if missing_sidecars:
         return (
             "OCR generated. Created placeholder sidecars for missing metadata "
-            f"({', '.join(missing_sidecars)}). Fill in the QR file with "
+            f"({', '.join(missing_sidecars)}). Required fields are: QR -> type, studentId/user_id, and examId/testId; "
+            "Rows -> question_id and answer (A-E). Fill the QR file with "
             "'type=EXAM;studentId=<student_id>;examId=<exam_id>' and the answers file with "
             "a JSON object (for example {\"81535\":\"A\"}), then click Scan again to build extracted rows."
         )
@@ -376,7 +387,7 @@ def run_ocr_and_extract_for_processing_file(ingest_root: Path, file_path: Path) 
 
     normalized_answers = {str(k): str(v) for k, v in answers_payload.items()}
     try:
-        extracted_rows = AnswerSheetExtractor().extract_rows(ocr_text, qr_payload, normalized_answers)
+        extracted_rows = extractor.extract_rows(ocr_text, qr_payload, normalized_answers)
     except ValueError as exc:
         return f"OCR generated. Extraction pending valid QR/answers: {exc}"
 
