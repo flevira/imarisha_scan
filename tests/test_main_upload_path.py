@@ -343,6 +343,56 @@ def test_run_ocr_prefers_preprocessed_image_for_qr_decode(tmp_path, monkeypatch)
     assert payload[0]["answer"] == "D"
 
 
+def test_run_ocr_pdf_combines_all_rendered_pages_into_extracted_rows(tmp_path, monkeypatch) -> None:
+    ingest_root = tmp_path / "runtime_data"
+    processing = ingest_root / "processing"
+    processing.mkdir(parents=True)
+    scan_file = processing / "three_pages.pdf"
+    scan_file.write_text("binary", encoding="utf-8")
+
+    artifacts_preprocess = ingest_root / "artifacts" / "preprocess"
+    page_1 = artifacts_preprocess / "pre_three_pages_page-1.png"
+    page_2 = artifacts_preprocess / "pre_three_pages_page-2.png"
+    page_3 = artifacts_preprocess / "pre_three_pages_page-3.png"
+    for page in (page_1, page_2, page_3):
+        page.parent.mkdir(parents=True, exist_ok=True)
+        page.write_text("png", encoding="utf-8")
+
+    from imarisha_scan import main as main_module
+    from imarisha_scan.ocr import OcrResult
+    from imarisha_scan.qr import QrDecodeResult
+
+    monkeypatch.setattr(main_module.LocalTesseractEngine, "is_available", lambda self: True)
+    monkeypatch.setattr(main_module, "_render_pdf_pages_for_ocr", lambda pdf, output_dir: [page_1, page_2, page_3])
+
+    page_text_by_name = {
+        page_1.name: "81535 - A",
+        page_2.name: "81570 - B",
+        page_3.name: "81679 - C",
+    }
+    monkeypatch.setattr(
+        main_module.LocalTesseractEngine,
+        "extract_text",
+        lambda self, image_path, language="eng": OcrResult(
+            text=page_text_by_name[Path(image_path).name],
+            provider="mock",
+        ),
+    )
+    monkeypatch.setattr(
+        main_module.QrPayloadDecoder,
+        "decode_payload",
+        lambda self, image_path: QrDecodeResult(payload="type=EXAM;studentId=82;examId=1756", backend="mock"),
+    )
+
+    message = run_ocr_and_extract_for_processing_file(ingest_root, scan_file)
+
+    extracted_path = scan_file.with_suffix(".extracted.json")
+    payload = json.loads(extracted_path.read_text(encoding="utf-8"))
+    assert "OCR and extraction sidecars generated" in message
+    assert [row["question_id"] for row in payload] == ["81535", "81570", "81679"]
+    assert [row["answer"] for row in payload] == ["A", "B", "C"]
+
+
 def test_run_ocr_uses_existing_qr_sidecar_and_common_student_id(tmp_path, monkeypatch) -> None:
     ingest_root = tmp_path / "runtime_data"
     processing = ingest_root / "processing"
