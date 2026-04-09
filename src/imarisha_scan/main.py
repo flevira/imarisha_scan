@@ -11,6 +11,7 @@ import sys
 
 import importlib
 import importlib.util
+from imarisha_scan.export import CsvExporter
 from imarisha_scan.ingest import FolderLifecycleManager, IngestConfig
 
 
@@ -184,14 +185,27 @@ def initialize_file_picker(ft_module, page) -> object | None:
     return None
 
 
-def _sample_review_session() -> ReviewSession:
-    return ReviewSession(
-        [
-            ReviewRecord(user_id="82", question_id="81535", test_id="", exam_id="1756", answer="C"),
-            ReviewRecord(user_id="82", question_id="81570", test_id="", exam_id="1756", answer="A"),
-            ReviewRecord(user_id="82", question_id="81679", test_id="", exam_id="1756", answer="E"),
-        ]
+def _record_from_processing_file(file_path: Path) -> ReviewRecord:
+    """Create a review record from a processed scan file path."""
+    stem_parts = file_path.stem.split("_")
+    base_name = "_".join(stem_parts[1:]) if len(stem_parts) > 1 else file_path.stem
+    answer_guess = base_name[:1].upper() if base_name else ""
+    return ReviewRecord(
+        user_id="",
+        question_id=base_name or file_path.name,
+        test_id="",
+        exam_id="",
+        answer=answer_guess,
     )
+
+
+def load_review_session(ingest_root: Path) -> ReviewSession:
+    """Load rows that are currently in the processing queue for manual review."""
+    ingest_config = IngestConfig(root_dir=ingest_root)
+    lifecycle = FolderLifecycleManager(ingest_config)
+    lifecycle.ensure_directories()
+    rows = [_record_from_processing_file(item) for item in sorted(ingest_config.processing_dir.iterdir()) if item.is_file()]
+    return ReviewSession(rows)
 
 
 def run() -> None:
@@ -210,7 +224,7 @@ def run() -> None:
         page.window_height = 760
         page.padding = 16
 
-        session = _sample_review_session()
+        session = load_review_session(ingest_root=get_ingest_root_dir())
         ingest_root = get_ingest_root_dir()
         scans_dir = ingest_root / "scans"
         storage_notice = ""
@@ -223,6 +237,7 @@ def run() -> None:
             storage_notice = f"Primary path not writable; using temporary storage at {scans_dir}."
 
         summary = ft.Text(size=14)
+        review_status = ft.Text(size=13)
         upload_status = ft.Text(size=13)
         queued_file_selector = ft.Dropdown(
             label="Queued file",
@@ -292,6 +307,8 @@ def run() -> None:
                 f"Approved: {session.approved_count} | Rejected: {session.rejected_count} "
                 f"| Error queue: {len(session.error_queue)}"
             )
+            if not session.rows:
+                review_status.value = "No scans are currently staged for review. Click Scan on the Upload tab first."
             grid_container.controls.clear()
 
             header = ft.Row(
@@ -379,6 +396,53 @@ def run() -> None:
             selected_file = queued_file_selector.value or ""
             _, message = advance_selected_scan_to_ingestion(ingest_root, selected_file)
             refresh_upload_status(message)
+            review_status.value = "Scan initiated. Open Review to validate staged rows."
+            page.update()
+
+        def refresh_review(_: ft.ControlEvent | None = None) -> None:
+            nonlocal session
+            refreshed = load_review_session(ingest_root)
+            for idx, current_row in enumerate(session.rows):
+                if idx < len(refreshed.rows):
+                    refreshed.rows[idx] = replace(
+                        refreshed.rows[idx],
+                        user_id=current_row.user_id,
+                        question_id=current_row.question_id,
+                        test_id=current_row.test_id,
+                        exam_id=current_row.exam_id,
+                        answer=current_row.answer,
+                        status=current_row.status,
+                    )
+            session = refreshed
+            render()
+            page.update()
+
+        def export_review(_: ft.ControlEvent) -> None:
+            approved_rows = [
+                {
+                    "user_id": row.user_id,
+                    "question_id": row.question_id,
+                    "test_id": row.test_id,
+                    "exam_id": row.exam_id,
+                    "answer": row.answer,
+                    "status": row.status,
+                }
+                for row in session.rows
+                if row.status == "approved"
+            ]
+            if not approved_rows:
+                review_status.value = "No approved rows to export yet."
+                page.update()
+                return
+
+            output_file = ingest_root / "exports" / "review_export.csv"
+            exporter = CsvExporter()
+            exporter.export_rows(
+                rows=approved_rows,
+                fieldnames=["user_id", "question_id", "test_id", "exam_id", "answer", "status"],
+                output_path=output_file,
+            )
+            review_status.value = f"Exported {len(approved_rows)} approved row(s) to {output_file}."
             page.update()
 
         upload_controls.append(
@@ -404,6 +468,13 @@ def run() -> None:
             [
                 ft.Text("Review UI: editable grid with approve/reject workflow", size=14),
                 summary,
+                ft.Row(
+                    [
+                        ft.Button("Refresh Review Queue", on_click=refresh_review),
+                        ft.Button("Export Approved", on_click=export_review),
+                    ]
+                ),
+                review_status,
                 ft.Divider(),
                 grid_container,
             ],
