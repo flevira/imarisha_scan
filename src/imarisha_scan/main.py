@@ -43,11 +43,13 @@ try:
     from imarisha_scan.export import CsvExporter
     from imarisha_scan.ingest import FolderLifecycleManager, IngestConfig
     from imarisha_scan.qr import QrPayloadDecoder
+    from imarisha_scan.workflow import FinalResultsWorkflow
 except ModuleNotFoundError:
     from extract import AnswerSheetExtractor  # type: ignore[no-redef]
     from export import CsvExporter  # type: ignore[no-redef]
     from ingest import FolderLifecycleManager, IngestConfig  # type: ignore[no-redef]
     from qr import QrPayloadDecoder  # type: ignore[no-redef]
+    from workflow import FinalResultsWorkflow  # type: ignore[no-redef]
 
 try:
     from imarisha_scan.ui import ReviewRecord, ReviewSession
@@ -414,7 +416,28 @@ def rows_from_processing_file(file_path: Path) -> list[ReviewRecord]:
 
 
 def load_review_session(ingest_root: Path) -> ReviewSession:
-    """Load rows that are currently in the processing queue for manual review."""
+    """Load rows for manual review, preferring the latest final extracted CSV output."""
+    final_csv = ingest_root / "outputs" / "final_extracted_results.csv"
+    if final_csv.exists() and final_csv.is_file():
+        rows: list[ReviewRecord] = []
+        try:
+            with final_csv.open("r", encoding="utf-8", newline="") as f:
+                reader = csv.DictReader(f)
+                for item in reader:
+                    rows.append(
+                        ReviewRecord(
+                            exam_type=str(item.get("sheet_type", "")).strip().upper(),
+                            user_id=str(item.get("student_id", "")).strip(),
+                            test_id=str(item.get("test_id", "")).strip(),
+                            exam_id=str(item.get("exam_id", "")).strip(),
+                            source_file=str(item.get("page", "")),
+                        )
+                    )
+        except OSError:
+            rows = []
+        if rows:
+            return ReviewSession(rows)
+
     ingest_config = IngestConfig(root_dir=ingest_root)
     lifecycle = FolderLifecycleManager(ingest_config)
     lifecycle.ensure_directories()
@@ -439,6 +462,33 @@ def completed_rows_for_export(session: ReviewSession) -> list[dict[str, str]]:
         for row in session.rows
         if row.status in {"approved", "rejected"}
     ]
+
+
+def run_extraction_for_uploaded_file(ingest_root: Path, source_file: Path, student_id_mode: str = "auto") -> str:
+    """Run final extraction for one uploaded PDF and write CSV + SQLite outputs."""
+    if not source_file.exists() or not source_file.is_file():
+        return f"Selected file is missing: {source_file.name}"
+    if source_file.suffix.lower() != ".pdf":
+        return "Only PDF files are supported for extraction. Upload a PDF answer sheet."
+
+    output_dir = ingest_root / "outputs"
+    output_csv = output_dir / "final_extracted_results.csv"
+    output_db = output_dir / "final_extracted_results.sqlite"
+
+    try:
+        result = FinalResultsWorkflow().run(
+            source_pdf=source_file,
+            output_csv=output_csv,
+            output_db=output_db,
+            student_id_mode=student_id_mode,
+        )
+    except Exception as exc:  # noqa: BLE001 - extraction failures should be shown in UI.
+        return f"Extraction failed: {exc}"
+
+    return (
+        f"Extraction complete for {source_file.name}. Rows: {result.row_count}. "
+        f"CSV: {result.csv_path} | DB: {result.db_path}"
+    )
 
 
 def serialize_completed_rows_to_csv(rows: list[dict[str, str]]) -> str:
@@ -466,8 +516,8 @@ def run() -> None:
         page.window_height = 760
         page.padding = 16
 
-        session = load_review_session(ingest_root=get_ingest_root_dir())
         ingest_root = get_ingest_root_dir()
+        session = load_review_session(ingest_root=ingest_root)
         scans_dir = ingest_root / "scans"
         storage_notice = ""
         try:
@@ -485,6 +535,18 @@ def run() -> None:
             label="Queued file",
             hint_text="Select a queued scan to start",
             expand=True,
+            dense=True,
+        )
+        student_id_source_selector = ft.Dropdown(
+            label="Student ID source",
+            hint_text="Choose QR/TEXT/AUTO",
+            value="auto",
+            options=[
+                ft.dropdown.Option("qr", "QR only"),
+                ft.dropdown.Option("text", "TEXT only"),
+                ft.dropdown.Option("auto", "AUTO (QR first, then text)"),
+            ],
+            width=280,
             dense=True,
         )
         manual_path_input = ft.TextField(
@@ -609,13 +671,14 @@ def run() -> None:
 
         upload_controls: list[ft.Control] = [
             ft.Text("Upload files", size=20, weight=ft.FontWeight.BOLD),
-            ft.Text("Add scanned PDFs/images to queue for processing.", size=13),
+            ft.Text("Add PDF answer sheets, run extraction, then review/approve/export.", size=13),
             ft.Text(
                 "Paste a file/folder path below, then click Add Path. "
                 "This replaces the file picker to avoid unsupported runtime controls.",
                 size=13,
             ),
-            ft.Text("Scanning extracts QR metadata only (exam type, student ID, exam ID, test ID).", size=13),
+            ft.Text("Simplified workflow: Upload → Run Extraction → Review & Approve → Export CSV.", size=13),
+            ft.Text("Student ID source mode applies during extraction (QR / TEXT / AUTO).", size=13),
         ]
 
         def add_path(_: ft.ControlEvent) -> None:
@@ -633,19 +696,24 @@ def run() -> None:
                 refresh_upload_status(f"Added {copied} file(s) from path.")
             page.update()
 
-        def start_scan(_: ft.ControlEvent) -> None:
+        def run_extraction(_: ft.ControlEvent) -> None:
             selected_file = queued_file_selector.value or ""
-            staged_path, message = advance_selected_scan_to_ingestion(ingest_root, selected_file)
-            ocr_message = ""
-            if staged_path is not None and staged_path.parent.name == "processing":
-                ocr_message = run_ocr_and_extract_for_processing_file(
-                    ingest_root,
-                    staged_path,
-                )
+            if not selected_file:
+                refresh_upload_status("Select a queued file first, then run extraction.")
+                page.update()
+                return
 
-            combined_message = message if not ocr_message else f"{message} {ocr_message}"
-            refresh_upload_status(combined_message)
-            review_status.value = "Scan initiated. Open Review to validate staged rows."
+            selected_student_id_mode = (student_id_source_selector.value or "auto").strip().lower()
+            if selected_student_id_mode not in {"qr", "text", "auto"}:
+                selected_student_id_mode = "auto"
+
+            message = run_extraction_for_uploaded_file(
+                ingest_root,
+                scans_dir / selected_file,
+                student_id_mode=selected_student_id_mode,
+            )
+            refresh_upload_status(message)
+            review_status.value = "Extraction finished. Open Review and click Refresh Review Queue."
             page.update()
 
         def refresh_review(_: ft.ControlEvent | None = None) -> None:
@@ -701,7 +769,8 @@ def run() -> None:
                     manual_path_input,
                     ft.Button("Add Path", on_click=add_path),
                     ft.Button("Refresh", on_click=lambda _: (refresh_upload_status(), page.update())),
-                    ft.Button("Scan", on_click=start_scan),
+                    student_id_source_selector,
+                    ft.Button("Run Extraction", on_click=run_extraction),
                 ]
             )
         )
@@ -716,7 +785,7 @@ def run() -> None:
 
         review_view = ft.Column(
             [
-                ft.Text("Review UI: editable grid with approve/reject workflow", size=14),
+                ft.Text("Review UI: load extracted rows, edit fields, approve/reject, and export", size=14),
                 summary,
                 ft.Row(
                     [
