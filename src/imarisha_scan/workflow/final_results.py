@@ -24,11 +24,17 @@ class FinalResultsWorkflow:
         if self._deps_loaded:
             return
         global cv2, fitz, np, pd, pytesseract
-        import cv2  # type: ignore
-        import fitz  # type: ignore
-        import numpy as np  # type: ignore
-        import pandas as pd  # type: ignore
-        import pytesseract  # type: ignore
+        try:
+            import cv2  # type: ignore
+            import fitz  # type: ignore
+            import numpy as np  # type: ignore
+            import pandas as pd  # type: ignore
+            import pytesseract  # type: ignore
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "Missing extraction dependency. Install with: "
+                "pip install pymupdf opencv-python-headless pandas pytesseract pillow numpy"
+            ) from exc
 
         self._deps_loaded = True
 
